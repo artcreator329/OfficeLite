@@ -3,6 +3,9 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
+# Keep local paths, including the builder's username, out of the published binary.
+export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$HOME=~ --remap-path-prefix=$PWD=."
+
 cargo build --release
 
 RELEASE_DIR="${CARGO_TARGET_DIR:-target}/release"
@@ -28,11 +31,11 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
-    <string>1.0</string>
+    <string>1.0.0</string>
     <key>CFBundleVersion</key>
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
-    <string>10.13</string>
+    <string>11.0</string>
 </dict>
 </plist>
 PLIST

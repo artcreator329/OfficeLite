@@ -23,9 +23,27 @@
 
 ---
 
-## 🚀 Build and Run
+## ⬇️ Download
 
-OfficeLite is built from source. You need a Mac with the [Rust toolchain](https://rustup.rs) installed.
+Needs a Mac with Apple Silicon (M1 or later) running macOS 11 or newer.
+
+1. Download the `.zip` from the [latest release](https://github.com/artcreator329/OfficeLite/releases/latest).
+2. Unzip it and drag `OfficeLite.app` into `/Applications`.
+3. Open it. The first time, macOS blocks it because the app is not signed with an Apple Developer ID. Go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway**.
+
+If macOS says the app is damaged or offers no Open Anyway button, run this once in Terminal, then open the app again:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/OfficeLite.app
+```
+
+That command removes the download warning for this app, so only run it if you trust where you got the file.
+
+---
+
+## 🚀 Build From Source
+
+You need a Mac with the [Rust toolchain](https://rustup.rs) installed.
 
 ```bash
 git clone https://github.com/artcreator329/OfficeLite.git
