@@ -5,10 +5,11 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 cargo build --release
 
-APP=target/release/OfficeLite.app
+RELEASE_DIR="${CARGO_TARGET_DIR:-target}/release"
+APP="$RELEASE_DIR/OfficeLite.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp target/release/officelite "$APP/Contents/MacOS/OfficeLite"
+cp "$RELEASE_DIR/officelite" "$APP/Contents/MacOS/OfficeLite"
 cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 
 cat > "$APP/Contents/Info.plist" <<'PLIST'
