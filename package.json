@@ -1,0 +1,12 @@
+{
+  "name": "officelite",
+  "version": "1.0.0",
+  "description": "**OfficeLite** is a fast, completely free, and private document and spreadsheet editor built so you never need to pay **\\$70 - \\$100/year** for a Microsoft 365 / Office subscription.",
+  "main": "app.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

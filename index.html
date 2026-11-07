@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Open, edit, and save Word and Excel files on your Mac, offline and free.">
+  <title>OfficeLite</title>
+  <link rel="stylesheet" href="styles.css">
+  <script src="vendor/jszip.min.js"></script>
+  <script src="vendor/mammoth.browser.min.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body data-mode="doc">
+
+  <!-- Icons: Phosphor Icons (regular weight), MIT. See vendor/icons/LICENSE-phosphor.txt -->
+  <svg class="icon-sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-arrow-u-up-left" viewBox="0 0 256 256"><path d="M232,144a64.07,64.07,0,0,1-64,64H80a8,8,0,0,1,0-16h88a48,48,0,0,0,0-96H51.31l34.35,34.34a8,8,0,0,1-11.32,11.32l-48-48a8,8,0,0,1,0-11.32l48-48A8,8,0,0,1,85.66,45.66L51.31,80H168A64.07,64.07,0,0,1,232,144Z"/></symbol>
+    <symbol id="i-arrow-u-up-right" viewBox="0 0 256 256"><path d="M170.34,130.34,204.69,96H88a48,48,0,0,0,0,96h88a8,8,0,0,1,0,16H88A64,64,0,0,1,88,80H204.69L170.34,45.66a8,8,0,0,1,11.32-11.32l48,48a8,8,0,0,1,0,11.32l-48,48a8,8,0,0,1-11.32-11.32Z"/></symbol>
+    <symbol id="i-check-circle" viewBox="0 0 256 256"><path d="M173.66,98.34a8,8,0,0,1,0,11.32l-56,56a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L112,148.69l50.34-50.35A8,8,0,0,1,173.66,98.34ZM232,128A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"/></symbol>
+    <symbol id="i-columns-plus-left" viewBox="0 0 256 256"><path d="M128,32H104A16,16,0,0,0,88,48V208a16,16,0,0,0,16,16h24a16,16,0,0,0,16-16V48A16,16,0,0,0,128,32Zm0,176H104V48h24ZM200,32H176a16,16,0,0,0-16,16V208a16,16,0,0,0,16,16h24a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm0,176H176V48h24ZM72,128a8,8,0,0,1-8,8H48v16a8,8,0,0,1-16,0V136H16a8,8,0,0,1,0-16H32V104a8,8,0,0,1,16,0v16H64A8,8,0,0,1,72,128Z"/></symbol>
+    <symbol id="i-columns-plus-right" viewBox="0 0 256 256"><path d="M80,32H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H80a16,16,0,0,0,16-16V48A16,16,0,0,0,80,32Zm0,176H56V48H80ZM152,32H128a16,16,0,0,0-16,16V208a16,16,0,0,0,16,16h24a16,16,0,0,0,16-16V48A16,16,0,0,0,152,32Zm0,176H128V48h24Zm96-80a8,8,0,0,1-8,8H224v16a8,8,0,0,1-16,0V136H192a8,8,0,0,1,0-16h16V104a8,8,0,0,1,16,0v16h16A8,8,0,0,1,248,128Z"/></symbol>
+    <symbol id="i-eraser" viewBox="0 0 256 256"><path d="M225,80.4,183.6,39a24,24,0,0,0-33.94,0L31,157.66a24,24,0,0,0,0,33.94l30.06,30.06A8,8,0,0,0,66.74,224H216a8,8,0,0,0,0-16h-84.7L225,114.34A24,24,0,0,0,225,80.4ZM108.68,208H70.05L42.33,180.28a8,8,0,0,1,0-11.31L96,115.31,148.69,168Zm105-105L160,156.69,107.31,104,161,50.34a8,8,0,0,1,11.32,0l41.38,41.38a8,8,0,0,1,0,11.31Z"/></symbol>
+    <symbol id="i-file-arrow-down" viewBox="0 0 256 256"><path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-42.34-61.66a8,8,0,0,1,0,11.32l-24,24a8,8,0,0,1-11.32,0l-24-24a8,8,0,0,1,11.32-11.32L120,164.69V120a8,8,0,0,1,16,0v44.69l10.34-10.35A8,8,0,0,1,157.66,154.34Z"/></symbol>
+    <symbol id="i-file-text" viewBox="0 0 256 256"><path d="M213.66,82.34l-56-56A8,8,0,0,0,152,24H56A16,16,0,0,0,40,40V216a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V88A8,8,0,0,0,213.66,82.34ZM160,51.31,188.69,80H160ZM200,216H56V40h88V88a8,8,0,0,0,8,8h48V216Zm-32-80a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,136Zm0,32a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h64A8,8,0,0,1,168,168Z"/></symbol>
+    <symbol id="i-files" viewBox="0 0 256 256"><path d="M213.66,66.34l-40-40A8,8,0,0,0,168,24H88A16,16,0,0,0,72,40V56H56A16,16,0,0,0,40,72V216a16,16,0,0,0,16,16H168a16,16,0,0,0,16-16V200h16a16,16,0,0,0,16-16V72A8,8,0,0,0,213.66,66.34ZM168,216H56V72h76.69L168,107.31v84.53c0,.06,0,.11,0,.16s0,.1,0,.16V216Zm32-32H184V104a8,8,0,0,0-2.34-5.66l-40-40A8,8,0,0,0,136,56H88V40h76.69L200,75.31Zm-56-32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,152Zm0,32a8,8,0,0,1-8,8H88a8,8,0,0,1,0-16h48A8,8,0,0,1,144,184Z"/></symbol>
+    <symbol id="i-floppy-disk" viewBox="0 0 256 256"><path d="M219.31,72,184,36.69A15.86,15.86,0,0,0,172.69,32H48A16,16,0,0,0,32,48V208a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V83.31A15.86,15.86,0,0,0,219.31,72ZM168,208H88V152h80Zm40,0H184V152a16,16,0,0,0-16-16H88a16,16,0,0,0-16,16v56H48V48H172.69L208,83.31ZM160,72a8,8,0,0,1-8,8H96a8,8,0,0,1,0-16h56A8,8,0,0,1,160,72Z"/></symbol>
+    <symbol id="i-folder-open" viewBox="0 0 256 256"><path d="M245,110.64A16,16,0,0,0,232,104H216V88a16,16,0,0,0-16-16H130.67L102.94,51.2a16.14,16.14,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V208h0a8,8,0,0,0,8,8H211.1a8,8,0,0,0,7.59-5.47l28.49-85.47A16.05,16.05,0,0,0,245,110.64ZM93.34,64,123.2,86.4A8,8,0,0,0,128,88h72v16H69.77a16,16,0,0,0-15.18,10.94L40,158.7V64Zm112,136H43.1l26.67-80H232Z"/></symbol>
+    <symbol id="i-function" viewBox="0 0 256 256"><path d="M208,40a8,8,0,0,1-8,8H170.71a24,24,0,0,0-23.62,19.71L137.59,120H184a8,8,0,0,1,0,16H134.68l-10,55.16A40,40,0,0,1,85.29,224H56a8,8,0,0,1,0-16H85.29a24,24,0,0,0,23.62-19.71l9.5-52.29H72a8,8,0,0,1,0-16h49.32l10-55.16A40,40,0,0,1,170.71,32H200A8,8,0,0,1,208,40Z"/></symbol>
+    <symbol id="i-highlighter" viewBox="0 0 256 256"><path d="M253.66,106.34a8,8,0,0,0-11.32,0L192,156.69,107.31,72l50.35-50.34a8,8,0,1,0-11.32-11.32L96,60.69A16,16,0,0,0,93.18,79.5L72,100.69a16,16,0,0,0,0,22.62L76.69,128,18.34,186.34a8,8,0,0,0,3.13,13.25l72,24A7.88,7.88,0,0,0,96,224a8,8,0,0,0,5.66-2.34L136,187.31l4.69,4.69a16,16,0,0,0,22.62,0l21.19-21.18A16,16,0,0,0,203.31,168l50.35-50.34A8,8,0,0,0,253.66,106.34ZM93.84,206.85l-55-18.35L88,139.31,124.69,176ZM152,180.69,83.31,112,104,91.31,172.69,160Z"/></symbol>
+    <symbol id="i-image" viewBox="0 0 256 256"><path d="M216,40H40A16,16,0,0,0,24,56V200a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A16,16,0,0,0,216,40Zm0,16V158.75l-26.07-26.06a16,16,0,0,0-22.63,0l-20,20-44-44a16,16,0,0,0-22.62,0L40,149.37V56ZM40,172l52-52,80,80H40Zm176,28H194.63l-36-36,20-20L216,181.38V200ZM144,100a12,12,0,1,1,12,12A12,12,0,0,1,144,100Z"/></symbol>
+    <symbol id="i-info" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm16-40a8,8,0,0,1-8,8,16,16,0,0,1-16-16V128a8,8,0,0,1,0-16,16,16,0,0,1,16,16v40A8,8,0,0,1,144,176ZM112,84a12,12,0,1,1,12,12A12,12,0,0,1,112,84Z"/></symbol>
+    <symbol id="i-link" viewBox="0 0 256 256"><path d="M240,88.23a54.43,54.43,0,0,1-16,37L189.25,160a54.27,54.27,0,0,1-38.63,16h-.05A54.63,54.63,0,0,1,96,119.84a8,8,0,0,1,16,.45A38.62,38.62,0,0,0,150.58,160h0a38.39,38.39,0,0,0,27.31-11.31l34.75-34.75a38.63,38.63,0,0,0-54.63-54.63l-11,11A8,8,0,0,1,135.7,59l11-11A54.65,54.65,0,0,1,224,48,54.86,54.86,0,0,1,240,88.23ZM109,185.66l-11,11A38.41,38.41,0,0,1,70.6,208h0a38.63,38.63,0,0,1-27.29-65.94L78,107.31A38.63,38.63,0,0,1,144,135.71a8,8,0,0,0,16,.45A54.86,54.86,0,0,0,144,96a54.65,54.65,0,0,0-77.27,0L32,130.75A54.62,54.62,0,0,0,70.56,224h0a54.28,54.28,0,0,0,38.64-16l11-11A8,8,0,0,0,109,185.66Z"/></symbol>
+    <symbol id="i-list-bullets" viewBox="0 0 256 256"><path d="M80,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H88A8,8,0,0,1,80,64Zm136,56H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,64H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM44,52A12,12,0,1,0,56,64,12,12,0,0,0,44,52Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,116Zm0,64a12,12,0,1,0,12,12A12,12,0,0,0,44,180Z"/></symbol>
+    <symbol id="i-list-numbers" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H104a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM104,72H216a8,8,0,0,0,0-16H104a8,8,0,0,0,0,16ZM216,184H104a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM43.58,55.16,48,52.94V104a8,8,0,0,0,16,0V40a8,8,0,0,0-11.58-7.16l-16,8a8,8,0,0,0,7.16,14.32ZM79.77,156.72a23.73,23.73,0,0,0-9.6-15.95,24.86,24.86,0,0,0-34.11,4.7,23.63,23.63,0,0,0-3.57,6.46,8,8,0,1,0,15,5.47,7.84,7.84,0,0,1,1.18-2.13,8.76,8.76,0,0,1,12-1.59A7.91,7.91,0,0,1,63.93,159a7.64,7.64,0,0,1-1.57,5.78,1,1,0,0,0-.08.11L33.59,203.21A8,8,0,0,0,40,216H72a8,8,0,0,0,0-16H56l19.08-25.53A23.47,23.47,0,0,0,79.77,156.72Z"/></symbol>
+    <symbol id="i-minus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128Z"/></symbol>
+    <symbol id="i-paint-bucket" viewBox="0 0 256 256"><path d="M234.53,139.07a8,8,0,0,0,3.13-13.24L122.17,10.34a8,8,0,0,0-11.31,0L70.25,51,45.65,26.34A8,8,0,0,0,34.34,37.66l24.6,24.6L15,106.17a24,24,0,0,0,0,33.94L99.89,225a24,24,0,0,0,33.94,0l78.49-78.49Zm-32.19-5.24-79.83,79.83a8,8,0,0,1-11.31,0L26.34,128.8a8,8,0,0,1,0-11.31L70.25,73.57l29.12,29.12a28,28,0,1,0,11.31-11.32L81.57,62.26l35-34.95L217.19,128l-11.72,3.9A8.09,8.09,0,0,0,202.34,133.83Zm-86.83-26.31,0,0a13.26,13.26,0,1,1-.05.06S115.51,107.53,115.51,107.52Zm123.15,56a8,8,0,0,0-13.32,0C223.57,166.23,208,190.09,208,208a24,24,0,0,0,48,0C256,190.09,240.43,166.23,238.66,163.56ZM232,216a8,8,0,0,1-8-8c0-6.8,4-16.32,8-24.08,4,7.76,8,17.34,8,24.08A8,8,0,0,1,232,216Z"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H136v80a8,8,0,0,1-16,0V136H40a8,8,0,0,1,0-16h80V40a8,8,0,0,1,16,0v80h80A8,8,0,0,1,224,128Z"/></symbol>
+    <symbol id="i-printer" viewBox="0 0 256 256"><path d="M214.67,72H200V40a8,8,0,0,0-8-8H64a8,8,0,0,0-8,8V72H41.33C27.36,72,16,82.77,16,96v80a8,8,0,0,0,8,8H56v32a8,8,0,0,0,8,8H192a8,8,0,0,0,8-8V184h32a8,8,0,0,0,8-8V96C240,82.77,228.64,72,214.67,72ZM72,48H184V72H72ZM184,208H72V160H184Zm40-40H200V152a8,8,0,0,0-8-8H64a8,8,0,0,0-8,8v16H32V96c0-4.41,4.19-8,9.33-8H214.67c5.14,0,9.33,3.59,9.33,8Zm-24-52a12,12,0,1,1-12-12A12,12,0,0,1,200,116Z"/></symbol>
+    <symbol id="i-question" viewBox="0 0 256 256"><path d="M140,180a12,12,0,1,1-12-12A12,12,0,0,1,140,180ZM128,72c-22.06,0-40,16.15-40,36v4a8,8,0,0,0,16,0v-4c0-11,10.77-20,24-20s24,9,24,20-10.77,20-24,20a8,8,0,0,0-8,8v8a8,8,0,0,0,16,0v-.72c18.24-3.35,32-17.9,32-35.28C168,88.15,150.06,72,128,72Zm104,56A104,104,0,1,1,128,24,104.11,104.11,0,0,1,232,128Zm-16,0a88,88,0,1,0-88,88A88.1,88.1,0,0,0,216,128Z"/></symbol>
+    <symbol id="i-rows-plus-bottom" viewBox="0 0 256 256"><path d="M208,112H48a16,16,0,0,0-16,16v24a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V128A16,16,0,0,0,208,112Zm0,40H48V128H208v24Zm0-112H48A16,16,0,0,0,32,56V80A16,16,0,0,0,48,96H208a16,16,0,0,0,16-16V56A16,16,0,0,0,208,40Zm0,40H48V56H208V80ZM160,216a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V224H104a8,8,0,0,1,0-16h16V192a8,8,0,0,1,16,0v16h16A8,8,0,0,1,160,216Z"/></symbol>
+    <symbol id="i-rows-plus-top" viewBox="0 0 256 256"><path d="M208,160H48a16,16,0,0,0-16,16v24a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V176A16,16,0,0,0,208,160Zm0,40H48V176H208v24Zm0-112H48a16,16,0,0,0-16,16v24a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,40H48V104H208v24ZM96,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H136V64a8,8,0,0,1-16,0V48H104A8,8,0,0,1,96,40Z"/></symbol>
+    <symbol id="i-sigma" viewBox="0 0 256 256"><path d="M184,72V56H80.65l53.6,67a8,8,0,0,1,0,10l-53.6,67H184V184a8,8,0,0,1,16,0v24a8,8,0,0,1-8,8H64a8,8,0,0,1-6.25-13l60-75-60-75A8,8,0,0,1,64,40H192a8,8,0,0,1,8,8V72a8,8,0,0,1-16,0Z"/></symbol>
+    <symbol id="i-table" viewBox="0 0 256 256"><path d="M224,48H32a8,8,0,0,0-8,8V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A8,8,0,0,0,224,48ZM40,112H80v32H40Zm56,0H216v32H96ZM216,64V96H40V64ZM40,160H80v32H40Zm176,32H96V160H216v32Z"/></symbol>
+    <symbol id="i-text-aa" viewBox="0 0 256 256"><path d="M87.24,52.59a8,8,0,0,0-14.48,0l-64,136a8,8,0,1,0,14.48,6.81L39.9,160h80.2l16.66,35.4a8,8,0,1,0,14.48-6.81ZM47.43,144,80,74.79,112.57,144ZM200,96c-12.76,0-22.73,3.47-29.63,10.32a8,8,0,0,0,11.26,11.36c3.8-3.77,10-5.68,18.37-5.68,13.23,0,24,9,24,20v3.22A42.76,42.76,0,0,0,200,128c-22.06,0-40,16.15-40,36s17.94,36,40,36a42.73,42.73,0,0,0,24-7.25,8,8,0,0,0,16-.75V132C240,112.15,222.06,96,200,96Zm0,88c-13.23,0-24-9-24-20s10.77-20,24-20,24,9,24,20S213.23,184,200,184Z"/></symbol>
+    <symbol id="i-text-align-center" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64ZM64,96a8,8,0,0,0,0,16H192a8,8,0,0,0,0-16Zm152,40H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm-24,40H64a8,8,0,0,0,0,16H192a8,8,0,0,0,0-16Z"/></symbol>
+    <symbol id="i-text-align-justify" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64ZM216,96H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,40H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,40H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></symbol>
+    <symbol id="i-text-align-left" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64Zm8,48H168a8,8,0,0,0,0-16H40a8,8,0,0,0,0,16Zm176,24H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm-48,40H40a8,8,0,0,0,0,16H168a8,8,0,0,0,0-16Z"/></symbol>
+    <symbol id="i-text-align-right" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64ZM216,96H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,40H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm0,40H88a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Z"/></symbol>
+    <symbol id="i-text-b" viewBox="0 0 256 256"><path d="M178.48,115.7A44,44,0,0,0,148,40H80a8,8,0,0,0-8,8V200a8,8,0,0,0,8,8h80a48,48,0,0,0,18.48-92.3ZM88,56h60a28,28,0,0,1,0,56H88Zm72,136H88V128h72a32,32,0,0,1,0,64Z"/></symbol>
+    <symbol id="i-text-indent" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H112a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM112,72H216a8,8,0,0,0,0-16H112a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM34.34,141.66a8,8,0,0,0,11.32,0l40-40a8,8,0,0,0,0-11.32l-40-40A8,8,0,0,0,34.34,61.66L68.69,96,34.34,130.34A8,8,0,0,0,34.34,141.66Z"/></symbol>
+    <symbol id="i-text-italic" viewBox="0 0 256 256"><path d="M200,56a8,8,0,0,1-8,8H157.77L115.1,192H144a8,8,0,0,1,0,16H64a8,8,0,0,1,0-16H98.23L140.9,64H112a8,8,0,0,1,0-16h80A8,8,0,0,1,200,56Z"/></symbol>
+    <symbol id="i-text-outdent" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H112a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM112,72H216a8,8,0,0,0,0-16H112a8,8,0,0,0,0,16ZM216,184H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16ZM72,144a8,8,0,0,0,5.66-13.66L43.31,96,77.66,61.66A8,8,0,0,0,66.34,50.34l-40,40a8,8,0,0,0,0,11.32l40,40A8,8,0,0,0,72,144Z"/></symbol>
+    <symbol id="i-text-strikethrough" viewBox="0 0 256 256"><path d="M224,128a8,8,0,0,1-8,8H175.93c9.19,7.11,16.07,17.2,16.07,32,0,13.34-7,25.7-19.75,34.79C160.33,211.31,144.61,216,128,216s-32.33-4.69-44.25-13.21C71,193.7,64,181.34,64,168a8,8,0,0,1,16,0c0,17.35,22,32,48,32s48-14.65,48-32c0-14.85-10.54-23.58-38.77-32H40a8,8,0,0,1,0-16H216A8,8,0,0,1,224,128ZM76.33,104a8,8,0,0,0,7.61-10.49A17.3,17.3,0,0,1,83.11,88c0-18.24,19.3-32,44.89-32,18.84,0,34.16,7.42,41,19.85a8,8,0,0,0,14-7.7C173.33,50.52,152.77,40,128,40,93.29,40,67.11,60.63,67.11,88a33.73,33.73,0,0,0,1.62,10.49A8,8,0,0,0,76.33,104Z"/></symbol>
+    <symbol id="i-text-underline" viewBox="0 0 256 256"><path d="M200,224a8,8,0,0,1-8,8H64a8,8,0,0,1,0-16H192A8,8,0,0,1,200,224Zm-72-24a64.07,64.07,0,0,0,64-64V56a8,8,0,0,0-16,0v80a48,48,0,0,1-96,0V56a8,8,0,0,0-16,0v80A64.07,64.07,0,0,0,128,200Z"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 256 256"><path d="M216,48H176V40a24,24,0,0,0-24-24H104A24,24,0,0,0,80,40v8H40a8,8,0,0,0,0,16h8V208a16,16,0,0,0,16,16H192a16,16,0,0,0,16-16V64h8a8,8,0,0,0,0-16ZM96,40a8,8,0,0,1,8-8h48a8,8,0,0,1,8,8v8H96Zm96,168H64V64H192ZM112,104v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Zm48,0v64a8,8,0,0,1-16,0V104a8,8,0,0,1,16,0Z"/></symbol>
+    <symbol id="i-warning-circle" viewBox="0 0 256 256"><path d="M128,24A104,104,0,1,0,232,128,104.11,104.11,0,0,0,128,24Zm0,192a88,88,0,1,1,88-88A88.1,88.1,0,0,1,128,216Zm-8-80V80a8,8,0,0,1,16,0v56a8,8,0,0,1-16,0Zm20,36a12,12,0,1,1-12-12A12,12,0,0,1,140,172Z"/></symbol>
+    <symbol id="i-x" viewBox="0 0 256 256"><path d="M205.66,194.34a8,8,0,0,1-11.32,11.32L128,139.31,61.66,205.66a8,8,0,0,1-11.32-11.32L116.69,128,50.34,61.66A8,8,0,0,1,61.66,50.34L128,116.69l66.34-66.35a8,8,0,0,1,11.32,11.32L139.31,128Z"/></symbol>
+  </svg>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo" id="brandLogo">
+        <div class="brand-icon" aria-hidden="true">OL</div>
+        <span class="brand-name">OfficeLite</span>
+      </div>
+
+      <div class="doc-name-wrapper">
+        <input type="text" id="docNameInput" class="doc-name-input" value="Untitled Document" aria-label="File name" title="Rename this file" spellcheck="false">
+        <div class="save-status-badge" id="saveStatus" data-state="saved" role="status">
+          <div class="save-dot"></div>
+          <span id="saveStatusText">Saved</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Mode Switcher: Document vs Spreadsheet -->
+    <div class="mode-switcher-container" role="group" aria-label="Editor mode">
+      <button class="mode-btn" id="btnModeDoc" aria-pressed="true" title="Edit Word documents">
+        <svg class="icon" aria-hidden="true"><use href="#i-file-text"/></svg> Document
+      </button>
+      <button class="mode-btn" id="btnModeSheet" aria-pressed="false" title="Edit Excel spreadsheets">
+        <svg class="icon" aria-hidden="true"><use href="#i-table"/></svg> Spreadsheet
+      </button>
+    </div>
+
+    <!-- Top Action Buttons -->
+    <div class="header-actions">
+      <button class="btn btn-ghost btn-icon" id="btnPrint" aria-label="Print or save as PDF" title="Print or save as PDF (⌘P)"><svg class="icon" aria-hidden="true"><use href="#i-printer"/></svg></button>
+      <button class="btn btn-ghost btn-icon" id="btnSamples" aria-label="Open a sample file" title="Open a sample file"><svg class="icon" aria-hidden="true"><use href="#i-files"/></svg></button>
+      <button class="btn btn-ghost btn-icon" id="btnHelp" aria-label="Other free office apps" title="Other free office apps"><svg class="icon" aria-hidden="true"><use href="#i-question"/></svg></button>
+
+      <div class="header-divider" aria-hidden="true"></div>
+
+      <button class="btn btn-collapsible" id="btnNew" aria-label="New file" title="Create a blank file">
+        <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> <span class="btn-label">New</span>
+      </button>
+
+      <button class="btn btn-collapsible" id="btnOpenFile" aria-label="Open file" title="Open .docx, .xlsx, .csv, .txt, or .html (⌘O)">
+        <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg> <span class="btn-label">Open</span>
+      </button>
+      <input type="file" id="fileInput" class="visually-hidden" tabindex="-1" aria-hidden="true" accept=".docx,.doc,.xlsx,.xls,.csv,.txt,.html">
+
+      <button class="btn btn-primary" id="btnSaveMain" title="Save a copy of this file (⌘S)">
+        <svg class="icon" aria-hidden="true"><use href="#i-floppy-disk"/></svg> <span id="saveBtnLabel">Save .docx</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Ribbon Toolbar for Word Documents -->
+  <div class="ribbon-toolbar only-doc" id="toolbarDoc" role="toolbar" aria-label="Document formatting">
+    <div class="toolbar-group">
+      <button class="tool-btn" id="docUndo" aria-label="Undo" title="Undo (⌘Z)"><svg class="icon" aria-hidden="true"><use href="#i-arrow-u-up-left"/></svg></button>
+      <button class="tool-btn" id="docRedo" aria-label="Redo" title="Redo (⇧⌘Z)"><svg class="icon" aria-hidden="true"><use href="#i-arrow-u-up-right"/></svg></button>
+    </div>
+
+    <div class="toolbar-group">
+      <select class="tool-select tool-select-style" id="docFormatSelect" aria-label="Paragraph style" title="Paragraph style">
+        <option value="p">Normal text</option>
+        <option value="h1">Heading 1</option>
+        <option value="h2">Heading 2</option>
+        <option value="h3">Heading 3</option>
+        <option value="blockquote">Quote</option>
+        <option value="pre">Code block</option>
+      </select>
+
+      <select class="tool-select tool-select-font" id="docFontFamily" aria-label="Font" title="Font">
+        <option value="Calibri, sans-serif">Calibri</option>
+        <option value="Arial, sans-serif">Arial</option>
+        <option value="'Times New Roman', serif">Times New Roman</option>
+        <option value="Georgia, serif">Georgia</option>
+        <option value="'Courier New', monospace">Courier New</option>
+        <option value="Geist, sans-serif">Geist</option>
+        <option value="-apple-system, sans-serif">SF Pro</option>
+      </select>
+
+      <select class="tool-select tool-select-size" id="docFontSize" aria-label="Font size" title="Font size">
+        <option value="1">10 pt</option>
+        <option value="2">11 pt</option>
+        <option value="3" selected>12 pt</option>
+        <option value="4">14 pt</option>
+        <option value="5">18 pt</option>
+        <option value="6">24 pt</option>
+        <option value="7">32 pt</option>
+      </select>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="docBold" aria-label="Bold" aria-pressed="false" title="Bold (⌘B)"><svg class="icon" aria-hidden="true"><use href="#i-text-b"/></svg></button>
+      <button class="tool-btn" id="docItalic" aria-label="Italic" aria-pressed="false" title="Italic (⌘I)"><svg class="icon" aria-hidden="true"><use href="#i-text-italic"/></svg></button>
+      <button class="tool-btn" id="docUnderline" aria-label="Underline" aria-pressed="false" title="Underline (⌘U)"><svg class="icon" aria-hidden="true"><use href="#i-text-underline"/></svg></button>
+      <button class="tool-btn" id="docStrike" aria-label="Strikethrough" aria-pressed="false" title="Strikethrough"><svg class="icon" aria-hidden="true"><use href="#i-text-strikethrough"/></svg></button>
+    </div>
+
+    <div class="toolbar-group">
+      <label class="color-picker-wrapper tool-btn" title="Text color">
+        <svg class="icon" aria-hidden="true"><use href="#i-text-aa"/></svg>
+        <span class="color-swatch" aria-hidden="true"></span>
+        <input type="color" id="docTextColor" class="color-input-hidden" value="#1e293b" aria-label="Text color">
+      </label>
+      <label class="color-picker-wrapper tool-btn" title="Highlight color">
+        <svg class="icon" aria-hidden="true"><use href="#i-highlighter"/></svg>
+        <span class="color-swatch" aria-hidden="true"></span>
+        <input type="color" id="docHighlightColor" class="color-input-hidden" value="#fef08a" aria-label="Highlight color">
+      </label>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="docAlignLeft" aria-label="Align left" aria-pressed="false" title="Align left"><svg class="icon" aria-hidden="true"><use href="#i-text-align-left"/></svg></button>
+      <button class="tool-btn" id="docAlignCenter" aria-label="Align center" aria-pressed="false" title="Align center"><svg class="icon" aria-hidden="true"><use href="#i-text-align-center"/></svg></button>
+      <button class="tool-btn" id="docAlignRight" aria-label="Align right" aria-pressed="false" title="Align right"><svg class="icon" aria-hidden="true"><use href="#i-text-align-right"/></svg></button>
+      <button class="tool-btn" id="docAlignJustify" aria-label="Justify" aria-pressed="false" title="Justify"><svg class="icon" aria-hidden="true"><use href="#i-text-align-justify"/></svg></button>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="docBulletList" aria-label="Bulleted list" aria-pressed="false" title="Bulleted list"><svg class="icon" aria-hidden="true"><use href="#i-list-bullets"/></svg></button>
+      <button class="tool-btn" id="docNumberList" aria-label="Numbered list" aria-pressed="false" title="Numbered list"><svg class="icon" aria-hidden="true"><use href="#i-list-numbers"/></svg></button>
+      <button class="tool-btn" id="docOutdent" aria-label="Decrease indent" title="Decrease indent"><svg class="icon" aria-hidden="true"><use href="#i-text-outdent"/></svg></button>
+      <button class="tool-btn" id="docIndent" aria-label="Increase indent" title="Increase indent"><svg class="icon" aria-hidden="true"><use href="#i-text-indent"/></svg></button>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="docInsertTable" aria-label="Insert table" title="Insert table"><svg class="icon" aria-hidden="true"><use href="#i-table"/></svg></button>
+      <button class="tool-btn" id="docInsertImage" aria-label="Insert image" title="Insert image"><svg class="icon" aria-hidden="true"><use href="#i-image"/></svg></button>
+      <input type="file" id="imageInput" class="visually-hidden" tabindex="-1" aria-hidden="true" accept="image/*">
+      <button class="tool-btn" id="docInsertLink" aria-label="Insert link" title="Insert link"><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg></button>
+      <button class="tool-btn" id="docInsertHr" aria-label="Insert horizontal line" title="Insert horizontal line"><svg class="icon" aria-hidden="true"><use href="#i-minus"/></svg></button>
+      <button class="tool-btn" id="docClearFormat" aria-label="Clear formatting" title="Clear formatting"><svg class="icon" aria-hidden="true"><use href="#i-eraser"/></svg></button>
+    </div>
+  </div>
+
+  <!-- Ribbon Toolbar for Excel Spreadsheets -->
+  <div class="ribbon-toolbar only-sheet" id="toolbarSheet" role="toolbar" aria-label="Spreadsheet formatting">
+    <div class="toolbar-group">
+      <button class="tool-btn" id="sheetBold" aria-label="Bold" aria-pressed="false" title="Bold"><svg class="icon" aria-hidden="true"><use href="#i-text-b"/></svg></button>
+      <button class="tool-btn" id="sheetItalic" aria-label="Italic" aria-pressed="false" title="Italic"><svg class="icon" aria-hidden="true"><use href="#i-text-italic"/></svg></button>
+      <label class="color-picker-wrapper tool-btn" title="Text color">
+        <svg class="icon" aria-hidden="true"><use href="#i-text-aa"/></svg>
+        <span class="color-swatch" aria-hidden="true"></span>
+        <input type="color" id="sheetTextColor" class="color-input-hidden" value="#000000" aria-label="Text color">
+      </label>
+      <label class="color-picker-wrapper tool-btn" title="Fill color">
+        <svg class="icon" aria-hidden="true"><use href="#i-paint-bucket"/></svg>
+        <span class="color-swatch" aria-hidden="true"></span>
+        <input type="color" id="sheetFillColor" class="color-input-hidden" value="#ffffff" aria-label="Fill color">
+      </label>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="sheetAlignLeft" aria-label="Align left" aria-pressed="false" title="Align left"><svg class="icon" aria-hidden="true"><use href="#i-text-align-left"/></svg></button>
+      <button class="tool-btn" id="sheetAlignCenter" aria-label="Align center" aria-pressed="false" title="Align center"><svg class="icon" aria-hidden="true"><use href="#i-text-align-center"/></svg></button>
+      <button class="tool-btn" id="sheetAlignRight" aria-label="Align right" aria-pressed="false" title="Align right"><svg class="icon" aria-hidden="true"><use href="#i-text-align-right"/></svg></button>
+    </div>
+
+    <div class="toolbar-group">
+      <select class="tool-select tool-select-format" id="sheetNumberFormat" aria-label="Number format" title="Number format">
+        <option value="general">General</option>
+        <option value="currency">Currency</option>
+        <option value="percent">Percent</option>
+        <option value="decimal">2 decimals</option>
+        <option value="integer">Integer</option>
+        <option value="text">Plain text</option>
+      </select>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="sheetInsertRowAbove" aria-label="Insert row above" title="Insert row above"><svg class="icon" aria-hidden="true"><use href="#i-rows-plus-top"/></svg></button>
+      <button class="tool-btn" id="sheetInsertRowBelow" aria-label="Insert row below" title="Insert row below"><svg class="icon" aria-hidden="true"><use href="#i-rows-plus-bottom"/></svg></button>
+      <button class="tool-btn has-label" id="sheetDeleteRow" title="Delete this row"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg> Row</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn" id="sheetInsertColLeft" aria-label="Insert column left" title="Insert column left"><svg class="icon" aria-hidden="true"><use href="#i-columns-plus-left"/></svg></button>
+      <button class="tool-btn" id="sheetInsertColRight" aria-label="Insert column right" title="Insert column right"><svg class="icon" aria-hidden="true"><use href="#i-columns-plus-right"/></svg></button>
+      <button class="tool-btn has-label" id="sheetDeleteCol" title="Delete this column"><svg class="icon" aria-hidden="true"><use href="#i-trash"/></svg> Column</button>
+    </div>
+
+    <div class="toolbar-group">
+      <button class="tool-btn has-label" id="sheetAutoSum" title="Add up the cells above this one"><svg class="icon" aria-hidden="true"><use href="#i-sigma"/></svg> AutoSum</button>
+    </div>
+  </div>
+
+  <!-- Excel Formula Bar -->
+  <div class="formula-bar-container only-sheet" id="formulaBarContainer">
+    <div class="cell-address-display" id="cellAddress" aria-label="Selected cell">A1</div>
+    <div class="formula-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="#i-function"/></svg></div>
+    <input type="text" id="formulaInput" class="formula-input" aria-label="Cell value or formula" placeholder="Value or formula, such as =SUM(A1:A5)" spellcheck="false">
+  </div>
+
+  <!-- Workspaces -->
+  <main class="workspace">
+    <!-- Word Document Workspace -->
+    <div class="doc-workspace only-doc" id="docWorkspace">
+      <div class="document-page" id="documentPage" contenteditable="true" spellcheck="true" role="textbox" aria-multiline="true" aria-label="Document"></div>
+    </div>
+
+    <!-- Excel Spreadsheet Workspace -->
+    <div class="sheet-workspace only-sheet" id="sheetWorkspace">
+      <div class="grid-scroll-container" id="gridContainer">
+        <table class="spreadsheet-grid" id="spreadsheetGrid">
+          <!-- Dynamically populated grid -->
+        </table>
+      </div>
+
+      <!-- Sheet Tabs Bar -->
+      <div class="sheet-tabs-bar" id="sheetTabsBar">
+        <div class="sheet-tabs-list" id="tabsList" role="tablist" aria-label="Sheets">
+          <!-- Tabs dynamically populated -->
+        </div>
+        <button class="tool-btn btn-add-sheet" id="btnAddSheet" aria-label="Add sheet" title="Add sheet"><svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg></button>
+      </div>
+    </div>
+  </main>
+
+  <!-- Status Bar -->
+  <footer class="status-bar">
+    <div class="status-left">
+      <div class="stat-group only-doc" id="docStats">
+        <span id="statWordCount">0 words</span>
+        <span id="statCharCount">0 characters</span>
+        <span id="statReadingTime">0 min read</span>
+      </div>
+      <div class="stat-group only-sheet" id="sheetStats">
+        <span id="sheetStatCell">Cell: A1</span>
+        <span id="sheetStatSum">Sum: 0</span>
+        <span id="sheetStatCount">Count: 0</span>
+      </div>
+    </div>
+
+    <div class="status-right stat-group">
+      <span id="engineBadge" title="How .docx files are converted"><span id="engineBadgeText">Built in converter</span></span>
+      <span>Private and offline</span>
+    </div>
+  </footer>
+
+  <!-- Drag and Drop Overlay -->
+  <div class="drag-overlay" id="dragOverlay">
+    <div class="drag-overlay-card">
+      <svg class="icon" aria-hidden="true"><use href="#i-file-arrow-down"/></svg>
+      <span>Drop a .docx, .xlsx, or .csv file to open it</span>
+    </div>
+  </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
+  <!-- Insert Table Modal -->
+  <div class="modal-overlay" id="modalTable">
+    <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="modalTableTitle">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalTableTitle">Insert table</h3>
+        <button class="tool-btn" id="modalTableClose" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="field-row">
+          <label class="field">
+            <span class="field-label">Rows</span>
+            <input type="number" class="input" id="tableRows" value="3" min="1" max="50" data-autofocus>
+          </label>
+          <label class="field">
+            <span class="field-label">Columns</span>
+            <input type="number" class="input" id="tableCols" value="3" min="1" max="20">
+          </label>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnCancelTable">Cancel</button>
+        <button class="btn btn-primary" id="btnConfirmTable" data-modal-confirm>Insert table</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Insert Link Modal -->
+  <div class="modal-overlay" id="modalLink">
+    <div class="modal-card modal-card-sm" role="dialog" aria-modal="true" aria-labelledby="modalLinkTitle">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalLinkTitle">Insert link</h3>
+        <button class="tool-btn" id="modalLinkClose" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body modal-fields">
+        <label class="field">
+          <span class="field-label">URL</span>
+          <input type="url" class="input" id="linkUrl" placeholder="https://example.com" data-autofocus spellcheck="false">
+          <span class="field-error" id="linkUrlError">Enter a URL to create the link.</span>
+        </label>
+        <label class="field">
+          <span class="field-label">Display text (optional)</span>
+          <input type="text" class="input" id="linkText" placeholder="Uses the URL if left blank">
+        </label>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnCancelLink">Cancel</button>
+        <button class="btn btn-primary" id="btnConfirmLink" data-modal-confirm>Insert link</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Free Alternatives Guide Modal -->
+  <div class="modal-overlay" id="modalHelp">
+    <div class="modal-card modal-card-lg" role="dialog" aria-modal="true" aria-labelledby="modalHelpTitle">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalHelpTitle">Other free office apps</h3>
+        <button class="tool-btn" id="modalHelpClose" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-lede">Microsoft 365 costs $70 to $100 a year. These options cost nothing and open the same files.</p>
+
+        <div class="alt-list">
+          <div class="alt-item">
+            <div class="alt-item-title">
+              <span>OfficeLite</span>
+              <span class="alt-item-tag">This app</span>
+            </div>
+            <p>Open, edit, and save .docx and .xlsx files with no subscription and no cloud uploads.</p>
+          </div>
+
+          <div class="alt-item">
+            <div class="alt-item-title">
+              <span>Apple Pages and Numbers</span>
+              <span class="alt-item-tag">Included on macOS</span>
+            </div>
+            <p>Pages edits Word files and Numbers edits Excel files. Both export back to .docx and .xlsx and sync with iCloud.</p>
+          </div>
+
+          <div class="alt-item">
+            <div class="alt-item-title">
+              <span>LibreOffice</span>
+              <span class="alt-item-tag">Open source</span>
+            </div>
+            <p>A full desktop suite from libreoffice.org, with Writer for Word files, Calc for Excel files, and Impress for PowerPoint files.</p>
+          </div>
+
+          <div class="alt-item">
+            <div class="alt-item-title">
+              <span>OnlyOffice Desktop Editors</span>
+              <span class="alt-item-tag">Close Office match</span>
+            </div>
+            <p>A desktop app from onlyoffice.com with a familiar layout and strong .docx and .xlsx fidelity.</p>
+          </div>
+
+          <div class="alt-item">
+            <div class="alt-item-title">
+              <span>Google Docs and Sheets</span>
+              <span class="alt-item-tag">In your browser</span>
+            </div>
+            <p>Upload a Word or Excel file at docs.google.com or sheets.google.com, edit it, and download it again.</p>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" id="btnHelpDone">Done</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Samples Modal -->
+  <div class="modal-overlay" id="modalSamples">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modalSamplesTitle">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalSamplesTitle">Open a sample file</h3>
+        <button class="tool-btn" id="modalSamplesClose" aria-label="Close"><svg class="icon" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="modal-body">
+        <div class="sample-list">
+          <button class="sample-option" id="btnLoadDocSample">
+            <svg class="icon" aria-hidden="true"><use href="#i-file-text"/></svg>
+            <span class="sample-option-text">
+              <span class="sample-option-title">Project proposal (.docx)</span>
+              <span class="sample-option-desc">Headings, a table, bullet points, and a quote.</span>
+            </span>
+          </button>
+
+          <button class="sample-option" id="btnLoadSheetSample">
+            <svg class="icon" aria-hidden="true"><use href="#i-table"/></svg>
+            <span class="sample-option-text">
+              <span class="sample-option-title">Company budget and payroll (.xlsx)</span>
+              <span class="sample-option-desc">Two sheets with SUM formulas and currency formatting.</span>
+            </span>
+          </button>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnCancelSamples">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Confirm Dialog -->
+  <div class="modal-overlay" id="modalConfirm">
+    <div class="modal-card modal-card-sm" role="alertdialog" aria-modal="true" aria-labelledby="modalConfirmTitle" aria-describedby="modalConfirmMessage">
+      <div class="modal-header">
+        <h3 class="modal-title" id="modalConfirmTitle">Are you sure?</h3>
+      </div>
+      <div class="modal-body">
+        <p id="modalConfirmMessage"></p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn" id="btnConfirmCancel" data-autofocus>Cancel</button>
+        <button class="btn btn-danger" id="btnConfirmOk">Continue</button>
+      </div>
+    </div>
+  </div>
+
+</body>
+</html>
