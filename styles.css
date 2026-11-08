@@ -40,6 +40,7 @@
   --accent-hover: #1e40af;
   --accent-light: #eff6ff;
   --accent-ring: rgba(29, 78, 216, 0.2);
+  --accent-tint: rgba(29, 78, 216, 0.1);
 
   /* Status */
   --danger: #b91c1c;
@@ -78,6 +79,7 @@ body[data-mode="sheet"] {
   --accent-hover: #0e6837;
   --accent-light: #f0fdf4;
   --accent-ring: rgba(16, 124, 65, 0.2);
+  --accent-tint: rgba(16, 124, 65, 0.1);
 }
 
 body[data-mode="doc"] .only-sheet,
@@ -445,6 +447,13 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   background-color: var(--bg-track);
 }
 
+.tool-btn:disabled {
+  color: var(--text-dim);
+  background: transparent;
+  cursor: default;
+  transform: none;
+}
+
 .tool-btn[aria-pressed="true"] {
   background-color: var(--accent-light);
   color: var(--accent);
@@ -531,13 +540,13 @@ body[data-mode="sheet"] .mode-switcher-container::before {
 }
 
 .cell-address-display {
-  width: 64px;
+  width: 96px;
   height: 32px;
+  border: none;
+  outline: none;
   background-color: var(--bg-subtle);
   border-radius: var(--radius-md);
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  text-align: center;
   font-family: var(--font-mono);
   font-size: 12px;
   line-height: 16px;
@@ -613,7 +622,7 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   outline: none;
   font-family: "Calibri", var(--font-sans);
   font-size: 16px; /* 12pt, the size the font menu calls its default */
-  line-height: 24px;
+  line-height: 1.5; /* Relative, so larger text in a line gets a taller line */
   color: var(--text-main);
   cursor: text;
 }
@@ -634,7 +643,7 @@ body[data-mode="sheet"] .mode-switcher-container::before {
 
 .document-page h1 {
   font-size: 30px;
-  line-height: 36px;
+  line-height: 1.2;
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text-strong);
@@ -643,7 +652,7 @@ body[data-mode="sheet"] .mode-switcher-container::before {
 
 .document-page h2 {
   font-size: 24px;
-  line-height: 32px;
+  line-height: 1.333;
   font-weight: 600;
   letter-spacing: -0.015em;
   color: var(--text-strong);
@@ -652,13 +661,30 @@ body[data-mode="sheet"] .mode-switcher-container::before {
 
 .document-page h3 {
   font-size: 20px;
-  line-height: 28px;
+  line-height: 1.4;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-main);
   margin: 16px 0 8px;
 }
 
+.document-page h4,
+.document-page h5,
+.document-page h6 {
+  font-size: 16px;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--text-main);
+  margin: 16px 0 8px;
+}
+/* The sizes the font menu lists. Browsers draw <font size> at other sizes. */
+.document-page font[size="1"] { font-size: 10pt; }
+.document-page font[size="2"] { font-size: 11pt; }
+.document-page font[size="3"] { font-size: 12pt; }
+.document-page font[size="4"] { font-size: 14pt; }
+.document-page font[size="5"] { font-size: 18pt; }
+.document-page font[size="6"] { font-size: 24pt; }
+.document-page font[size="7"] { font-size: 32pt; }
 .document-page p {
   margin-bottom: 12px;
   text-wrap: pretty;
@@ -680,7 +706,7 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   border-collapse: collapse;
   margin: 16px 0;
   font-size: 14px;
-  line-height: 20px;
+  line-height: 1.43;
   font-variant-numeric: tabular-nums;
 }
 
@@ -711,7 +737,7 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   padding: 12px;
   font-family: var(--font-mono);
   font-size: 14px;
-  line-height: 20px;
+  line-height: 1.43;
   overflow-x: auto;
   margin: 12px 0;
 }
@@ -726,6 +752,11 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   margin-bottom: 4px;
 }
 
+.document-page hr[data-page-break] {
+  height: 0;
+  background: none;
+  border-top: 1px dashed var(--border-strong);
+}
 .document-page img {
   max-width: 100%;
   border-radius: var(--radius-sm);
@@ -765,9 +796,9 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   border-right: 1px solid var(--border-color);
   border-bottom: 1px solid var(--border-color);
   padding: 0;
-  height: 24px;
-  font-size: 12px;
-  line-height: 16px;
+  height: 24px; /* ROW_HEIGHT in app.js */
+  font-size: 14px;
+  line-height: 20px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -779,32 +810,35 @@ body[data-mode="sheet"] .mode-switcher-container::before {
 .spreadsheet-grid .row-header {
   background-color: var(--bg-subtle);
   color: var(--text-muted);
+  font-size: 12px;
+  line-height: 16px;
   font-weight: 500;
   text-align: center;
   position: sticky;
   border-color: var(--border-strong);
+  cursor: pointer;
   transition: background-color var(--duration-fast) var(--ease),
     color var(--duration-fast) var(--ease);
 }
 
+.spreadsheet-grid .col-header:hover,
+.spreadsheet-grid .row-header:hover,
+.spreadsheet-grid .grid-corner:hover {
+  background-color: var(--bg-hover);
+}
+
 .grid-corner {
-  width: 48px;
-  min-width: 48px;
   top: 0;
   left: 0;
   z-index: var(--z-grid-corner);
 }
 
 .col-header {
-  min-width: 96px;
-  width: 96px;
   top: 0;
   z-index: var(--z-grid-col);
 }
 
 .row-header {
-  width: 48px;
-  min-width: 48px;
   left: 0;
   z-index: var(--z-grid-row);
 }
@@ -816,17 +850,31 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   font-weight: 600;
 }
 
+.col-resize {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 8px;
+  cursor: col-resize;
+}
+
+.col-resize:hover {
+  background-color: var(--accent-ring);
+}
+
 /* Grid Cells */
 .grid-cell {
-  background-color: var(--bg-surface);
   color: var(--text-main);
-  position: relative;
-  outline: none;
   cursor: cell;
 }
 
 .spreadsheet-grid .grid-cell {
   padding: 0 8px;
+}
+
+.spreadsheet-grid .grid-cell.spills {
+  overflow: visible;
 }
 
 .cell-content {
@@ -835,31 +883,154 @@ body[data-mode="sheet"] .mode-switcher-container::before {
   white-space: nowrap;
 }
 
-.grid-cell.selected {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-  z-index: var(--z-grid-cell);
+.spills .cell-content {
+  overflow: visible;
+  text-overflow: clip;
 }
 
-.grid-cell.editing {
+.grid-cell.is-error {
+  color: var(--danger);
+}
+
+.grid-cell.in-range {
+  box-shadow: inset 0 0 0 100px var(--accent-tint);
+}
+
+.grid-spacer td {
+  border: none !important;
+  padding: 0 !important;
+}
+
+/* A merged cell covers the grid lines inside it. */
+.merge-cell {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: var(--z-grid-cell);
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
   background-color: var(--bg-surface);
-  cursor: text;
+  border-right: 1px solid var(--border-color);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-main);
+  font-size: 14px;
+  line-height: 20px;
+  pointer-events: none;
+}
+
+.merge-anchor .cell-content {
+  visibility: hidden;
+}
+
+.merge-cell .cell-content {
+  width: 100%;
+}
+
+.merge-cell.is-error {
+  color: var(--danger);
+}
+
+.merge-cell.in-range {
+  box-shadow: inset 0 0 0 100vmax var(--accent-tint);
+}
+
+.grid-menu button:disabled {
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+/* Selection is drawn above the table, so drawing only the visible rows cannot disturb it. */
+.selection-range,
+.selection-active,
+.copy-box,
+.fill-handle,
+.cell-editor {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.selection-range,
+.selection-active,
+.copy-box {
+  z-index: var(--z-grid-cell);
+  pointer-events: none;
+}
+
+.selection-range {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.selection-active {
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.copy-box {
+  border: 2px dashed var(--accent);
+}
+
+.fill-handle {
+  z-index: var(--z-grid-cell);
+  width: 8px;
+  height: 8px;
+  background-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--bg-surface);
+  cursor: crosshair;
 }
 
 .cell-editor {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  border: 2px solid var(--accent);
-  padding: 0 6px;
-  font-size: 12px;
-  line-height: 16px;
+  z-index: var(--z-grid-cell);
+  border: none;
+  box-shadow: inset 0 0 0 2px var(--accent), var(--shadow-sm);
+  padding: 0 8px;
+  font-size: 14px;
+  line-height: 20px;
   font-family: inherit;
   color: var(--text-main);
   background-color: var(--bg-surface);
   outline: none;
   font-variant-numeric: tabular-nums;
+}
+
+/* Right click menu */
+.grid-menu {
+  position: fixed;
+  z-index: var(--z-modal);
+  display: flex;
+  flex-direction: column;
+  min-width: 184px;
+  padding: 4px;
+  border-radius: var(--radius-lg);
+  background-color: var(--bg-surface);
+  box-shadow: 0 0 0 1px var(--border-color), var(--shadow-overlay);
+}
+
+.grid-menu[hidden] {
+  display: none;
+}
+
+.grid-menu button {
+  height: 32px;
+  padding: 0 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-main);
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.grid-menu button:hover {
+  background-color: var(--accent-light);
+  color: var(--accent);
+}
+
+.grid-menu-divider {
+  height: 1px;
+  margin: 4px;
+  background-color: var(--border-color);
 }
 
 /* Sheet Tabs Bar */
@@ -1382,6 +1553,10 @@ body[data-mode="sheet"] .mode-switcher-container::before {
 
 /* Print CSS */
 @media print {
+  .document-page hr[data-page-break] {
+    border: none;
+    break-after: page;
+  }
   body {
     display: block;
     height: auto;
@@ -1413,8 +1588,23 @@ body[data-mode="sheet"] .mode-switcher-container::before {
     width: 100% !important;
     min-height: auto !important;
   }
-  .grid-cell.selected {
-    outline: none;
+  .selection-range,
+  .selection-active,
+  .copy-box,
+  .fill-handle,
+  .cell-editor,
+  .merge-cell,
+  .grid-menu {
+    display: none !important;
+  }
+  .grid-cell.in-range {
+    box-shadow: none;
+  }
+  .merge-anchor .cell-content {
+    visibility: visible;
+  }
+  .spreadsheet-grid {
+    width: auto !important;
   }
   .print-hidden,
   .spreadsheet-grid .grid-corner,

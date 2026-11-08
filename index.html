@@ -9,6 +9,8 @@
   <script src="vendor/jszip.min.js"></script>
   <script src="vendor/mammoth.browser.min.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
+  <script src="formula.js"></script>
+  <script src="docx.js"></script>
   <script src="app.js" defer></script>
 </head>
 <body data-mode="doc">
@@ -41,6 +43,7 @@
     <symbol id="i-rows-plus-bottom" viewBox="0 0 256 256"><path d="M208,112H48a16,16,0,0,0-16,16v24a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V128A16,16,0,0,0,208,112Zm0,40H48V128H208v24Zm0-112H48A16,16,0,0,0,32,56V80A16,16,0,0,0,48,96H208a16,16,0,0,0,16-16V56A16,16,0,0,0,208,40Zm0,40H48V56H208V80ZM160,216a8,8,0,0,1-8,8H136v16a8,8,0,0,1-16,0V224H104a8,8,0,0,1,0-16h16V192a8,8,0,0,1,16,0v16h16A8,8,0,0,1,160,216Z"/></symbol>
     <symbol id="i-rows-plus-top" viewBox="0 0 256 256"><path d="M208,160H48a16,16,0,0,0-16,16v24a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V176A16,16,0,0,0,208,160Zm0,40H48V176H208v24Zm0-112H48a16,16,0,0,0-16,16v24a16,16,0,0,0,16,16H208a16,16,0,0,0,16-16V104A16,16,0,0,0,208,88Zm0,40H48V104H208v24ZM96,40a8,8,0,0,1,8-8h16V16a8,8,0,0,1,16,0V32h16a8,8,0,0,1,0,16H136V64a8,8,0,0,1-16,0V48H104A8,8,0,0,1,96,40Z"/></symbol>
     <symbol id="i-sigma" viewBox="0 0 256 256"><path d="M184,72V56H80.65l53.6,67a8,8,0,0,1,0,10l-53.6,67H184V184a8,8,0,0,1,16,0v24a8,8,0,0,1-8,8H64a8,8,0,0,1-6.25-13l60-75-60-75A8,8,0,0,1,64,40H192a8,8,0,0,1,8,8V72a8,8,0,0,1-16,0Z"/></symbol>
+    <symbol id="i-merge-cells" viewBox="0 0 256 256"><g fill="none" stroke="currentColor" stroke-width="16" stroke-linecap="round" stroke-linejoin="round"><rect x="32" y="48" width="192" height="160" rx="8"/><path d="M64,128h40M84,108l20,20-20,20M192,128H152M172,108l-20,20,20,20"/></g></symbol>
     <symbol id="i-table" viewBox="0 0 256 256"><path d="M224,48H32a8,8,0,0,0-8,8V192a16,16,0,0,0,16,16H216a16,16,0,0,0,16-16V56A8,8,0,0,0,224,48ZM40,112H80v32H40Zm56,0H216v32H96ZM216,64V96H40V64ZM40,160H80v32H40Zm176,32H96V160H216v32Z"/></symbol>
     <symbol id="i-text-aa" viewBox="0 0 256 256"><path d="M87.24,52.59a8,8,0,0,0-14.48,0l-64,136a8,8,0,1,0,14.48,6.81L39.9,160h80.2l16.66,35.4a8,8,0,1,0,14.48-6.81ZM47.43,144,80,74.79,112.57,144ZM200,96c-12.76,0-22.73,3.47-29.63,10.32a8,8,0,0,0,11.26,11.36c3.8-3.77,10-5.68,18.37-5.68,13.23,0,24,9,24,20v3.22A42.76,42.76,0,0,0,200,128c-22.06,0-40,16.15-40,36s17.94,36,40,36a42.73,42.73,0,0,0,24-7.25,8,8,0,0,0,16-.75V132C240,112.15,222.06,96,200,96Zm0,88c-13.23,0-24-9-24-20s10.77-20,24-20,24,9,24,20S213.23,184,200,184Z"/></symbol>
     <symbol id="i-text-align-center" viewBox="0 0 256 256"><path d="M32,64a8,8,0,0,1,8-8H216a8,8,0,0,1,0,16H40A8,8,0,0,1,32,64ZM64,96a8,8,0,0,0,0,16H192a8,8,0,0,0,0-16Zm152,40H40a8,8,0,0,0,0,16H216a8,8,0,0,0,0-16Zm-24,40H64a8,8,0,0,0,0,16H192a8,8,0,0,0,0-16Z"/></symbol>
@@ -93,14 +96,14 @@
 
       <div class="header-divider" aria-hidden="true"></div>
 
-      <button class="btn btn-collapsible" id="btnNew" aria-label="New file" title="Create a blank file">
+      <button class="btn btn-collapsible" id="btnNew" aria-label="New file" title="Create a blank file (⌘N)">
         <svg class="icon" aria-hidden="true"><use href="#i-plus"/></svg> <span class="btn-label">New</span>
       </button>
 
       <button class="btn btn-collapsible" id="btnOpenFile" aria-label="Open file" title="Open .docx, .xlsx, .csv, .txt, or .html (⌘O)">
         <svg class="icon" aria-hidden="true"><use href="#i-folder-open"/></svg> <span class="btn-label">Open</span>
       </button>
-      <input type="file" id="fileInput" class="visually-hidden" tabindex="-1" aria-hidden="true" accept=".docx,.doc,.xlsx,.xls,.csv,.txt,.html">
+      <input type="file" id="fileInput" class="visually-hidden" tabindex="-1" aria-hidden="true" accept=".docx,.doc,.xlsx,.xls,.csv,.txt,.html,.htm">
 
       <button class="btn btn-primary" id="btnSaveMain" title="Save a copy of this file (⌘S)">
         <svg class="icon" aria-hidden="true"><use href="#i-floppy-disk"/></svg> <span id="saveBtnLabel">Save .docx</span>
@@ -193,6 +196,11 @@
   <!-- Ribbon Toolbar for Excel Spreadsheets -->
   <div class="ribbon-toolbar only-sheet" id="toolbarSheet" role="toolbar" aria-label="Spreadsheet formatting">
     <div class="toolbar-group">
+      <button class="tool-btn" id="sheetUndo" aria-label="Undo" title="Undo (⌘Z)" disabled><svg class="icon" aria-hidden="true"><use href="#i-arrow-u-up-left"/></svg></button>
+      <button class="tool-btn" id="sheetRedo" aria-label="Redo" title="Redo (⇧⌘Z)" disabled><svg class="icon" aria-hidden="true"><use href="#i-arrow-u-up-right"/></svg></button>
+    </div>
+
+    <div class="toolbar-group">
       <button class="tool-btn" id="sheetBold" aria-label="Bold" aria-pressed="false" title="Bold"><svg class="icon" aria-hidden="true"><use href="#i-text-b"/></svg></button>
       <button class="tool-btn" id="sheetItalic" aria-label="Italic" aria-pressed="false" title="Italic"><svg class="icon" aria-hidden="true"><use href="#i-text-italic"/></svg></button>
       <label class="color-picker-wrapper tool-btn" title="Text color">
@@ -211,6 +219,7 @@
       <button class="tool-btn" id="sheetAlignLeft" aria-label="Align left" aria-pressed="false" title="Align left"><svg class="icon" aria-hidden="true"><use href="#i-text-align-left"/></svg></button>
       <button class="tool-btn" id="sheetAlignCenter" aria-label="Align center" aria-pressed="false" title="Align center"><svg class="icon" aria-hidden="true"><use href="#i-text-align-center"/></svg></button>
       <button class="tool-btn" id="sheetAlignRight" aria-label="Align right" aria-pressed="false" title="Align right"><svg class="icon" aria-hidden="true"><use href="#i-text-align-right"/></svg></button>
+      <button class="tool-btn has-label" id="sheetMerge" aria-pressed="false" title="Merge the selected cells, or unmerge them"><svg class="icon" aria-hidden="true"><use href="#i-merge-cells"/></svg> Merge</button>
     </div>
 
     <div class="toolbar-group">
@@ -220,6 +229,7 @@
         <option value="percent">Percent</option>
         <option value="decimal">2 decimals</option>
         <option value="integer">Integer</option>
+        <option value="date">Date</option>
         <option value="text">Plain text</option>
       </select>
     </div>
@@ -243,7 +253,7 @@
 
   <!-- Excel Formula Bar -->
   <div class="formula-bar-container only-sheet" id="formulaBarContainer">
-    <div class="cell-address-display" id="cellAddress" aria-label="Selected cell">A1</div>
+    <input type="text" class="cell-address-display" id="cellAddress" aria-label="Selected cell. Type an address to go there." title="Type a cell or range to go there" value="A1" spellcheck="false">
     <div class="formula-icon" aria-hidden="true"><svg class="icon" aria-hidden="true"><use href="#i-function"/></svg></div>
     <input type="text" id="formulaInput" class="formula-input" aria-label="Cell value or formula" placeholder="Value or formula, such as =SUM(A1:A5)" spellcheck="false">
   </div>
@@ -261,6 +271,10 @@
         <table class="spreadsheet-grid" id="spreadsheetGrid">
           <!-- Dynamically populated grid -->
         </table>
+        <div class="selection-range" id="selectionRange" hidden></div>
+        <div class="selection-active" id="selectionActive"></div>
+        <div class="fill-handle" id="fillHandle" title="Drag to fill"></div>
+        <div class="copy-box" id="copyBox" hidden></div>
       </div>
 
       <!-- Sheet Tabs Bar -->
@@ -289,10 +303,23 @@
     </div>
 
     <div class="status-right stat-group">
-      <span id="engineBadge" title="How .docx files are converted"><span id="engineBadgeText">Built in converter</span></span>
       <span>Private and offline</span>
     </div>
   </footer>
+
+  <!-- Right click menu for the spreadsheet -->
+  <div class="grid-menu" id="gridMenu" role="menu" hidden>
+    <button role="menuitem" data-action="insertRowAbove">Insert row above</button>
+    <button role="menuitem" data-action="insertRowBelow">Insert row below</button>
+    <button role="menuitem" data-action="deleteRow">Delete row</button>
+    <div class="grid-menu-divider"></div>
+    <button role="menuitem" data-action="insertColLeft">Insert column left</button>
+    <button role="menuitem" data-action="insertColRight">Insert column right</button>
+    <button role="menuitem" data-action="deleteCol">Delete column</button>
+    <div class="grid-menu-divider"></div>
+    <button role="menuitem" data-action="merge">Merge cells</button>
+    <button role="menuitem" data-action="clear">Clear contents</button>
+  </div>
 
   <!-- Drag and Drop Overlay -->
   <div class="drag-overlay" id="dragOverlay">

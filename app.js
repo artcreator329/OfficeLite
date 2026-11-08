@@ -12,9 +12,8 @@
   const state = {
     mode: 'doc', // 'doc' | 'sheet'
     docTitle: 'Untitled Document',
+    docSection: null, // Page size and margins from the .docx file that was opened
     sheetTitle: 'Untitled Spreadsheet',
-    serverOnline: false,
-    pandocOnline: false,
     docModified: false,
     sheetModified: false,
 
@@ -29,8 +28,8 @@
           colCount: 20
         }
       },
-      selectedCell: { r: 1, c: 0 }, // Row index (0-based: row 1 is idx 0), Col index (0-based: col A is idx 0)
-      editingCell: null
+      selectedCell: { r: 0, c: 0 }, // The active cell. Row and column indexes start at 0.
+      rangeEnd: { r: 0, c: 0 } // The opposite corner of the selection
     }
   };
 
@@ -50,8 +49,6 @@
     btnPrint: document.getElementById('btnPrint'),
     btnSamples: document.getElementById('btnSamples'),
     btnHelp: document.getElementById('btnHelp'),
-    engineBadge: document.getElementById('engineBadge'),
-    engineBadgeText: document.getElementById('engineBadgeText'),
 
     // Ribbon toolbars
     toolbarDoc: document.getElementById('toolbarDoc'),
@@ -123,11 +120,16 @@
   }
 
   // --- Toast Notifications ---
+  function escapeXml(unsafe) {
+    const entities = { '<': '&lt;', '>': '&gt;', '&': '&amp;', '\'': '&apos;', '"': '&quot;' };
+    return String(unsafe ?? '').replace(/[<>&'"]/g, (c) => entities[c]);
+  }
+
   function icon(name) {
     return `<svg class="icon" aria-hidden="true"><use href="#i-${name}"/></svg>`;
   }
 
-  const TOAST_ICONS = { info: 'info', success: 'check-circle', error: 'warning-circle' };
+  const TOAST_ICONS = { info: 'info', success: 'check-circle', warning: 'warning-circle', error: 'warning-circle' };
   const MAX_TOASTS = 3;
 
   function showToast(message, kind = 'info') {
@@ -143,7 +145,7 @@
     setTimeout(() => {
       toast.classList.add('is-leaving');
       setTimeout(() => toast.remove(), 200);
-    }, kind === 'error' ? 6000 : 2800);
+    }, kind === 'error' || kind === 'warning' ? 6000 : 2800);
   }
 
   // --- Modals ---
@@ -289,32 +291,6 @@
     });
   }
 
-  // --- Server & Pandoc Health Check ---
-  async function checkServerStatus() {
-    try {
-      const res = await fetch('/api/status', { method: 'GET' });
-      if (res.ok) {
-        const data = await res.json();
-        state.serverOnline = true;
-        state.pandocOnline = data.pandoc_available;
-        if (data.pandoc_available) {
-          el.engineBadgeText.textContent = 'Pandoc converter';
-          el.engineBadge.title = `Converting .docx files with ${data.pandoc_version}`;
-        } else {
-          el.engineBadgeText.textContent = 'Built in converter';
-          el.engineBadge.title = 'Install Pandoc for higher fidelity .docx conversion';
-        }
-        return;
-      }
-    } catch (e) {
-      // Running standalone without python server
-    }
-    state.serverOnline = false;
-    state.pandocOnline = false;
-    el.engineBadgeText.textContent = 'Built in converter';
-    el.engineBadge.title = 'Converting .docx files inside the app';
-  }
-
   // ==========================================
   // --- DOCUMENT (WORD) EDITOR LOGIC ---
   // ==========================================
@@ -388,9 +364,23 @@
     const formatSelect = document.getElementById('docFormatSelect');
     formatSelect.value = [...formatSelect.options].some((o) => o.value === block) ? block : 'p';
 
-    const size = document.queryCommandValue('fontSize');
-    const sizeSelect = document.getElementById('docFontSize');
-    if ([...sizeSelect.options].some((o) => o.value === size)) sizeSelect.value = size;
+    const selection = window.getSelection();
+    const anchor = selection.anchorNode && (selection.anchorNode.nodeType === 1 ? selection.anchorNode : selection.anchorNode.parentElement);
+    if (anchor && el.documentPage.contains(anchor)) {
+      const computed = getComputedStyle(anchor);
+
+      // Blank when the text is a size or font the menus do not list.
+      const points = parseFloat(computed.fontSize) * 0.75;
+      const sizes = window.OfficeLiteDocx.FONT_SIZE_PT;
+      const sizeSelect = document.getElementById('docFontSize');
+      sizeSelect.value = Object.keys(sizes).find((key) => Math.abs(sizes[key] - points) < 0.1) || '';
+
+      const family = (value) => value.split(',')[0].replace(/['"]/g, '').trim().toLowerCase();
+      const fontSelect = document.getElementById('docFontFamily');
+      const current = family(computed.fontFamily);
+      const match = [...fontSelect.options].find((option) => family(option.value) === current);
+      fontSelect.value = match ? match.value : '';
+    }
   }
 
   // Setup Document Ribbon Toolbar
@@ -523,7 +513,8 @@
       html += `<th style="border:1px solid #cbd5e1; padding:8px 12px; background:#f8fafc;">Header ${c + 1}</th>`;
     }
     html += '</tr></thead><tbody>';
-    for (let r = 0; r < rows; r++) {
+    // The header row is one of the rows asked for.
+    for (let r = 1; r < rows; r++) {
       html += '<tr>';
       for (let c = 0; c < cols; c++) {
         html += '<td style="border:1px solid #cbd5e1; padding:8px 12px;">Cell</td>';
@@ -538,257 +529,52 @@
   async function loadDocxFile(file) {
     showToast('Opening document');
     const arrayBuffer = await file.arrayBuffer();
-
-    // Set doc title from file name
-    const title = file.name.replace(/\.[^/.]+$/, '');
-    state.docTitle = title;
-    el.docNameInput.value = title;
-
-    // Try Pandoc server first if available for high-fidelity HTML conversion
-    if (state.pandocOnline) {
-      try {
-        const res = await fetch('/api/import-docx', {
-          method: 'POST',
-          body: arrayBuffer
-        });
-        if (res.ok) {
-          const data = await res.json();
-          if (data.html) {
-            el.documentPage.innerHTML = data.html;
-            updateDocStats();
-            markSaved();
-            showToast('Document opened', 'success');
-            return;
-          }
-        }
-      } catch (e) {
-        console.warn('Server import failed, falling back to client Mammoth', e);
-      }
+    const isZip = new Uint8Array(arrayBuffer, 0, Math.min(2, arrayBuffer.byteLength)).join() === '80,75';
+    if (!isZip) {
+      showToast(/\.doc$/i.test(file.name)
+        ? 'OfficeLite cannot open the old .doc format. Save it as .docx in Word first.'
+        : 'This file is not a valid .docx document.', 'error');
+      return;
     }
 
-    // Client-side Mammoth.js fallback
+    let html;
+    let section = null;
+    let warnings = [];
     try {
-      if (window.mammoth) {
-        const result = await window.mammoth.convertToHtml({ arrayBuffer: arrayBuffer });
-        el.documentPage.innerHTML = result.value || '<p>Empty document</p>';
-        updateDocStats();
-        markSaved();
-        showToast('Document opened', 'success');
-      } else {
-        throw new Error('Mammoth library not loaded');
-      }
+      ({ html, section, warnings } = await window.OfficeLiteDocx.docxToHtml(arrayBuffer));
     } catch (err) {
-      showToast('Could not open this .docx file: ' + err.message, 'error');
-    }
-  }
-
-  // --- DOCX EXPORT (Client-side OpenXML builder + Server Pandoc) ---
-  function escapeXml(unsafe) {
-    return (unsafe || '').replace(/[<>&'"]/g, function (c) {
-      switch (c) {
-        case '<': return '&lt;';
-        case '>': return '&gt;';
-        case '&': return '&amp;';
-        case '\'': return '&apos;';
-        case '"': return '&quot;';
+      // A plainer reader is better than no document, as long as the user is told.
+      try {
+        html = (await window.mammoth.convertToHtml({ arrayBuffer })).value;
+        warnings = ['some formatting'];
+      } catch (fallbackErr) {
+        showToast('Could not open this .docx file: ' + err.message, 'error');
+        return;
       }
-    });
-  }
-
-  function generateClientOpenXmlDocx(containerElem) {
-    const zip = new window.JSZip();
-
-    // 1. [Content_Types].xml
-    zip.file('[Content_Types].xml',
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">' +
-      '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>' +
-      '<Default Extension="xml" ContentType="application/xml"/>' +
-      '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>' +
-      '<Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/>' +
-      '</Types>'
-    );
-
-    // 2. _rels/.rels
-    zip.folder('_rels').file('.rels',
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>' +
-      '</Relationships>'
-    );
-
-    // 3. word/_rels/document.xml.rels
-    zip.folder('word').folder('_rels').file('document.xml.rels',
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">' +
-      '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>' +
-      '</Relationships>'
-    );
-
-    // 4. word/styles.xml
-    zip.folder('word').file('styles.xml',
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-      '<w:docDefaults><w:rPrDefault><w:rPr><w:rFonts w:ascii="Calibri" w:hAnsi="Calibri"/><w:sz w:val="24"/><w:color w:val="1E293B"/></w:rPr></w:rPrDefault></w:docDefaults>' +
-      '<w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr><w:b/><w:sz w:val="48"/><w:color w:val="0F172A"/></w:rPr></w:style>' +
-      '<w:style w:type="paragraph" w:styleId="Heading2"><w:name w:val="heading 2"/><w:rPr><w:b/><w:sz w:val="36"/><w:color w:val="1E293B"/></w:rPr></w:style>' +
-      '<w:style w:type="paragraph" w:styleId="Heading3"><w:name w:val="heading 3"/><w:rPr><w:b/><w:sz w:val="28"/><w:color w:val="334155"/></w:rPr></w:style>' +
-      '</w:styles>'
-    );
-
-    // 5. Build document.xml body from DOM
-    let bodyXml = '';
-
-    function parseNode(node, currentStyle = {}) {
-      if (node.nodeType === Node.TEXT_NODE) {
-        const text = node.textContent;
-        if (!text) return '';
-        let rPr = '';
-        if (currentStyle.bold) rPr += '<w:b/>';
-        if (currentStyle.italic) rPr += '<w:i/>';
-        if (currentStyle.underline) rPr += '<w:u w:val="single"/>';
-        if (currentStyle.strike) rPr += '<w:strike/>';
-        if (currentStyle.size) rPr += `<w:sz w:val="${currentStyle.size}"/>`;
-        if (currentStyle.color) {
-          const hex = currentStyle.color.replace('#', '');
-          if (/^[0-9A-Fa-f]{6}$/.test(hex)) rPr += `<w:color w:val="${hex}"/>`;
-        }
-        return `<w:r>${rPr ? `<w:rPr>${rPr}</w:rPr>` : ''}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
-      }
-
-      if (node.nodeType !== Node.ELEMENT_NODE) return '';
-
-      const tag = node.tagName.toLowerCase();
-      const nextStyle = { ...currentStyle };
-
-      if (tag === 'strong' || tag === 'b') nextStyle.bold = true;
-      if (tag === 'em' || tag === 'i') nextStyle.italic = true;
-      if (tag === 'u') nextStyle.underline = true;
-      if (tag === 's' || tag === 'strike') nextStyle.strike = true;
-
-      // Check inline style font color
-      if (node.style && node.style.color) {
-        nextStyle.color = node.style.color;
-      }
-
-      if (tag === 'h1') {
-        let inner = '';
-        node.childNodes.forEach(child => inner += parseNode(child, nextStyle));
-        return `<w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr>${inner}</w:p>`;
-      }
-      if (tag === 'h2') {
-        let inner = '';
-        node.childNodes.forEach(child => inner += parseNode(child, nextStyle));
-        return `<w:p><w:pPr><w:pStyle w:val="Heading2"/></w:pPr>${inner}</w:p>`;
-      }
-      if (tag === 'h3') {
-        let inner = '';
-        node.childNodes.forEach(child => inner += parseNode(child, nextStyle));
-        return `<w:p><w:pPr><w:pStyle w:val="Heading3"/></w:pPr>${inner}</w:p>`;
-      }
-      if (tag === 'p' || tag === 'div') {
-        let inner = '';
-        node.childNodes.forEach(child => inner += parseNode(child, nextStyle));
-        let align = '';
-        if (node.style.textAlign === 'center') align = '<w:jc w:val="center"/>';
-        else if (node.style.textAlign === 'right') align = '<w:jc w:val="right"/>';
-        else if (node.style.textAlign === 'justify') align = '<w:jc w:val="both"/>';
-        return `<w:p><w:pPr>${align}</w:pPr>${inner}</w:p>`;
-      }
-      if (tag === 'ul' || tag === 'ol') {
-        let inner = '';
-        node.childNodes.forEach(li => {
-          if (li.tagName && li.tagName.toLowerCase() === 'li') {
-            let liInner = '';
-            li.childNodes.forEach(child => liInner += parseNode(child, nextStyle));
-            inner += `<w:p><w:pPr><w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr><w:r><w:t>• </w:t></w:r>${liInner}</w:p>`;
-          }
-        });
-        return inner;
-      }
-      if (tag === 'table') {
-        let tblXml = '<w:tbl><w:tblPr><w:tblBorders>' +
-          '<w:top w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/>' +
-          '<w:left w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/>' +
-          '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/>' +
-          '<w:right w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/>' +
-          '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/>' +
-          '<w:insideV w:val="single" w:sz="4" w:space="0" w:color="CCCCCC"/>' +
-          '</w:tblBorders></w:tblPr>';
-
-        const rows = node.querySelectorAll('tr');
-        rows.forEach(tr => {
-          tblXml += '<w:tr>';
-          const cells = tr.querySelectorAll('th, td');
-          cells.forEach(tc => {
-            let tcInner = '';
-            tc.childNodes.forEach(child => tcInner += parseNode(child, nextStyle));
-            if (!tcInner) tcInner = '<w:p/>';
-            tblXml += `<w:tc><w:p>${tcInner}</w:p></w:tc>`;
-          });
-          tblXml += '</w:tr>';
-        });
-        tblXml += '</w:tbl>';
-        return tblXml;
-      }
-
-      let childrenXml = '';
-      node.childNodes.forEach(child => {
-        childrenXml += parseNode(child, nextStyle);
-      });
-      return childrenXml;
     }
 
-    containerElem.childNodes.forEach(node => {
-      bodyXml += parseNode(node);
-    });
-
-    if (!bodyXml.trim()) {
-      bodyXml = '<w:p><w:r><w:t>Document Content</w:t></w:r></w:p>';
-    }
-
-    zip.folder('word').file('document.xml',
-      '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' +
-      '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">' +
-      '<w:body>' + bodyXml + '</w:body>' +
-      '</w:document>'
-    );
-
-    return zip.generateAsync({ type: 'blob' });
+    el.documentPage.innerHTML = html || '';
+    state.docSection = section;
+    state.docTitle = file.name.replace(/\.[^/.]+$/, '');
+    el.docNameInput.value = state.docTitle;
+    updateDocStats();
+    markSaved();
+    if (warnings.length) showToast(`Document opened. OfficeLite cannot keep ${warnings.join(', ')}.`, 'warning');
+    else showToast('Document opened', 'success');
   }
 
+  // --- DOCX EXPORT ---
   async function exportDocx() {
     const filename = (state.docTitle || 'document').replace(/\.[^/.]+$/, '') + '.docx';
-    const html = el.documentPage.innerHTML;
-
     try {
-      let blob = null;
-
-      // Option 1: Pandoc Server Export (Highest Fidelity)
-      if (state.pandocOnline) {
-        try {
-          const res = await fetch('/api/export-docx', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ html: html, filename: filename })
-          });
-          if (res.ok) blob = await res.blob();
-        } catch (e) {
-          console.warn('Server export failed, using client builder', e);
-        }
-      }
-
-      // Option 2: Pure Client-Side OpenXML Generator (Works Offline!)
-      if (!blob) blob = await generateClientOpenXmlDocx(el.documentPage);
-
+      const { blob, warnings } = await window.OfficeLiteDocx.htmlToDocx(el.documentPage, { section: state.docSection });
       await saveBlob(blob, filename);
+      if (warnings.length) showToast(`${warnings.join(', ')}.`, 'warning');
     } catch (err) {
       showToast('Could not save this .docx file: ' + err.message, 'error');
     }
   }
 
-  // Saves through the native panel in the app, or as a download in a browser.
-  // Reports success only once the file exists. Cancelling is not an error.
   async function saveBlob(blob, filename) {
     if (!IS_NATIVE_APP) {
       downloadBlob(blob, filename);
@@ -832,221 +618,436 @@
   // --- SPREADSHEET (EXCEL) LOGIC ---
   // ==========================================
 
+  const {
+    Engine, parseInput, formatValue, shiftRelative, adjustReferences,
+    renameSheetReferences, removeSheetReferences
+  } = window.OfficeLiteFormula;
+
+  // These match the sizes in styles.css. Fixed row heights let the grid draw only the visible rows.
+  const ROW_HEIGHT = 24;
+  const HEADER_HEIGHT = 24;
+  const ROW_HEADER_WIDTH = 48;
+  const DEFAULT_COL_WIDTH = 96;
+  const MIN_COL_WIDTH = 32;
+  const MAX_AUTO_COL_WIDTH = 320;
+  const MIN_ROWS = 1000;
+  const MIN_COLS = 26;
+  const ROW_OVERSCAN = 20;
+  const MAX_UNDO_STEPS = 100;
+  const MAX_UNDO_BYTES = 64 * 1024 * 1024;
+  const ERROR_VALUE = /^#[A-Z0-9/]+[!?A]$/;
+
+  const formulas = new Engine((name) => {
+    const match = state.sheet.sheetNames.find((n) => n.toLowerCase() === name.toLowerCase());
+    return match ? state.sheet.sheets[match] : null;
+  });
+
+  let colOffsets = [0];
+  let renderedRows = null;
+  let cellEditor = null; // { input, r, c, typed }
+  let formulaEdit = null; // { r, c, original }
+  let refPick = null; // { input, start, end, anchor }
+  let dragState = null;
+  let gridClipboard = null; // { text, sheetName, range, matrix, cut }
+  let undoStack = [];
+  let redoStack = [];
+
   function getActiveSheetData() {
     return state.sheet.sheets[state.sheet.activeSheet] || null;
   }
 
-  function evaluateFormula(expr, sheetData, visited = new Set()) {
-    if (!expr.startsWith('=')) return expr;
-    const raw = expr.substring(1).trim();
+  function normalizeSheet(sheet) {
+    sheet.rowCount = Math.max(sheet.rowCount || 0, MIN_ROWS);
+    sheet.colCount = Math.max(sheet.colCount || 0, MIN_COLS);
+    if (!sheet.colWidths) sheet.colWidths = {};
+  }
 
-    // Check SUM function: =SUM(A1:A5) or =SUM(A1, B1)
-    const sumMatch = raw.match(/^SUM\(([^)]+)\)$/i);
-    if (sumMatch) {
-      const args = sumMatch[1].split(',');
-      let total = 0;
-      args.forEach(arg => {
-        const rangeParts = arg.trim().split(':');
-        if (rangeParts.length === 2) {
-          const start = addressToCoord(rangeParts[0]);
-          const end = addressToCoord(rangeParts[1]);
-          if (start && end) {
-            const minR = Math.min(start.r, end.r);
-            const maxR = Math.max(start.r, end.r);
-            const minC = Math.min(start.c, end.c);
-            const maxC = Math.max(start.c, end.c);
-            for (let r = minR; r <= maxR; r++) {
-              for (let c = minC; c <= maxC; c++) {
-                const addr = coordToAddress(r, c);
-                const val = getCellValue(addr, sheetData, visited);
-                const num = parseFloat(val);
-                if (!isNaN(num)) total += num;
-              }
-            }
-          }
-        } else {
-          const val = getCellValue(arg.trim(), sheetData, visited);
-          const num = parseFloat(val);
-          if (!isNaN(num)) total += num;
-        }
-      });
-      return total;
-    }
+  function colWidth(sheet, c) {
+    return sheet.colWidths[c] || DEFAULT_COL_WIDTH;
+  }
 
-    // Check AVERAGE function
-    const avgMatch = raw.match(/^AVERAGE\(([^)]+)\)$/i);
-    if (avgMatch) {
-      const rangeParts = avgMatch[1].trim().split(':');
-      let total = 0, count = 0;
-      if (rangeParts.length === 2) {
-        const start = addressToCoord(rangeParts[0]);
-        const end = addressToCoord(rangeParts[1]);
-        if (start && end) {
-          for (let r = Math.min(start.r, end.r); r <= Math.max(start.r, end.r); r++) {
-            for (let c = Math.min(start.c, end.c); c <= Math.max(start.c, end.c); c++) {
-              const addr = coordToAddress(r, c);
-              const val = getCellValue(addr, sheetData, visited);
-              const num = parseFloat(val);
-              if (!isNaN(num)) {
-                total += num;
-                count++;
-              }
-            }
-          }
-        }
+  // --- Merged cells ---
+  // A merge is stored as { r1, c1, r2, c2 }. Its value and style live in the upper left cell.
+  function mergeAt(sheet, r, c) {
+    if (!sheet || !sheet.merges) return null;
+    return sheet.merges.find((m) => r >= m.r1 && r <= m.r2 && c >= m.c1 && c <= m.c2) || null;
+  }
+
+  function mergeRect(sheet, r, c) {
+    const m = mergeAt(sheet, r, c);
+    return m ? rectFor(m.r1, m.c1, m.r2, m.c2) : rectFor(r, c);
+  }
+
+  // A selection that touches a merged cell grows to cover all of it, as in Excel.
+  function expandToMerges(sheet, range) {
+    if (!sheet || !sheet.merges || !sheet.merges.length) return range;
+    const out = { ...range };
+    let grown = true;
+    while (grown) {
+      grown = false;
+      for (const m of sheet.merges) {
+        if (m.r1 > out.r2 || m.r2 < out.r1 || m.c1 > out.c2 || m.c2 < out.c1) continue;
+        if (m.r1 < out.r1) { out.r1 = m.r1; grown = true; }
+        if (m.c1 < out.c1) { out.c1 = m.c1; grown = true; }
+        if (m.r2 > out.r2) { out.r2 = m.r2; grown = true; }
+        if (m.c2 > out.c2) { out.c2 = m.c2; grown = true; }
       }
-      return count > 0 ? (total / count) : 0;
     }
+    return out;
+  }
 
-    // Check COUNT function
-    const countMatch = raw.match(/^COUNT\(([^)]+)\)$/i);
-    if (countMatch) {
-      const rangeParts = countMatch[1].trim().split(':');
-      let count = 0;
-      if (rangeParts.length === 2) {
-        const start = addressToCoord(rangeParts[0]);
-        const end = addressToCoord(rangeParts[1]);
-        if (start && end) {
-          for (let r = Math.min(start.r, end.r); r <= Math.max(start.r, end.r); r++) {
-            for (let c = Math.min(start.c, end.c); c <= Math.max(start.c, end.c); c++) {
-              const addr = coordToAddress(r, c);
-              const val = getCellValue(addr, sheetData, visited);
-              if (val !== '' && !isNaN(parseFloat(val))) count++;
-            }
-          }
-        }
-      }
-      return count;
+  // True when the selection is one cell, or exactly one merged cell.
+  function isSingleSelection(range) {
+    const a = state.sheet.selectedCell;
+    const m = mergeAt(getActiveSheetData(), a.r, a.c);
+    const own = m || { r1: a.r, c1: a.c, r2: a.r, c2: a.c };
+    return range.r1 === own.r1 && range.c1 === own.c1 && range.r2 === own.r2 && range.c2 === own.c2;
+  }
+
+  // The next cell in a direction, stepping over the whole of a merged cell.
+  function stepFrom(r, c, dr, dc) {
+    const m = mergeAt(getActiveSheetData(), r, c);
+    if (m) {
+      if (dr) r = dr > 0 ? m.r2 : m.r1;
+      if (dc) c = dc > 0 ? m.c2 : m.c1;
     }
+    return { r: r + dr, c: c + dc };
+  }
 
-    // Basic arithmetic evaluation: replace cell coordinates (e.g. A1, B2) with evaluated numeric values
-    let evalStr = raw.replace(/\b([A-Z]+[0-9]+)\b/gi, (match) => {
-      const val = getCellValue(match.toUpperCase(), sheetData, visited);
-      const num = parseFloat(val);
-      return isNaN(num) ? '0' : num;
+  // Moves a merge when rows or columns are inserted or deleted. Returns null when it is gone.
+  function shiftMerge(m, axis, at, count) {
+    const [lo, hi] = axis === 'row' ? ['r1', 'r2'] : ['c1', 'c2'];
+    let start = m[lo];
+    let end = m[hi];
+    if (count > 0) {
+      if (start >= at) start += count;
+      if (end >= at) end += count;
+    } else {
+      const removed = -count;
+      const last = at + removed - 1;
+      if (start > last) start -= removed;
+      else if (start >= at) start = at;
+      if (end > last) end -= removed;
+      else if (end >= at) end = at - 1;
+      if (end < start) return null;
+    }
+    const out = { ...m, [lo]: start, [hi]: end };
+    return out.r1 === out.r2 && out.c1 === out.c2 ? null : out;
+  }
+
+  // --- Selection geometry ---
+  function getRange() {
+    const a = state.sheet.selectedCell;
+    const e = state.sheet.rangeEnd || a;
+    return expandToMerges(getActiveSheetData(), {
+      r1: Math.min(a.r, e.r), c1: Math.min(a.c, e.c),
+      r2: Math.max(a.r, e.r), c2: Math.max(a.c, e.c)
     });
-
-    try {
-      // Safe arithmetic evaluator (only math operators and numbers allowed)
-      if (/^[0-9+\-*/().\s]+$/.test(evalStr)) {
-        // eslint-disable-next-line no-new-func
-        const res = Function(`"use strict"; return (${evalStr});`)();
-        return isNaN(res) ? '#VALUE!' : res;
-      }
-    } catch (e) {
-      return '#ERROR!';
-    }
-
-    return raw;
   }
 
-  function getCellValue(addr, sheetData, visited = new Set()) {
-    if (visited.has(addr)) return '#CYCLE!';
-    visited.add(addr);
-
-    const cell = sheetData.cells[addr];
-    if (!cell) return '';
-
-    if (cell.f) {
-      return evaluateFormula(cell.f, sheetData, visited);
-    }
-    return cell.v !== undefined ? cell.v : '';
+  function rangeLabel(range) {
+    const start = coordToAddress(range.r1, range.c1);
+    if (range.r1 === range.r2 && range.c1 === range.c2) return start;
+    return `${start}:${coordToAddress(range.r2, range.c2)}`;
   }
 
-  function formatCellValue(val, fmt) {
-    if (val === '' || val === null || val === undefined) return '';
-    const num = parseFloat(val);
-    if (isNaN(num)) return val;
+  function rectFor(r1, c1, r2 = r1, c2 = c1) {
+    return {
+      left: ROW_HEADER_WIDTH + colOffsets[c1],
+      top: HEADER_HEIGHT + r1 * ROW_HEIGHT,
+      width: colOffsets[c2 + 1] - colOffsets[c1],
+      height: (r2 - r1 + 1) * ROW_HEIGHT
+    };
+  }
 
-    switch (fmt) {
-      case 'currency':
-        return '$' + num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      case 'percent':
-        return (num * 100).toFixed(1) + '%';
-      case 'decimal':
-        return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-      case 'integer':
-        return Math.round(num).toLocaleString('en-US');
-      case 'text':
-        return String(val);
-      case 'general':
-      default:
-        return typeof val === 'number' ? num.toLocaleString('en-US') : val;
+  function placeBox(box, rect, visible = true) {
+    box.hidden = !visible;
+    if (!visible) return;
+    box.style.transform = `translate(${rect.left}px, ${rect.top}px)`;
+    box.style.width = `${rect.width}px`;
+    box.style.height = `${rect.height}px`;
+  }
+
+  function cellAtPoint(clientX, clientY) {
+    const sheet = getActiveSheetData();
+    const bounds = el.gridContainer.getBoundingClientRect();
+    const x = clientX - bounds.left + el.gridContainer.scrollLeft - ROW_HEADER_WIDTH;
+    const y = clientY - bounds.top + el.gridContainer.scrollTop - HEADER_HEIGHT;
+
+    let low = 0;
+    let high = sheet.colCount - 1;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      if (colOffsets[mid] <= x) low = mid;
+      else high = mid - 1;
     }
+    return { r: Math.max(0, Math.min(sheet.rowCount - 1, Math.floor(y / ROW_HEIGHT))), c: low };
+  }
+
+  function scrollCellIntoView(r, c) {
+    const box = el.gridContainer;
+    const rect = rectFor(r, c);
+    if (rect.top < box.scrollTop + HEADER_HEIGHT) box.scrollTop = rect.top - HEADER_HEIGHT;
+    else if (rect.top + rect.height > box.scrollTop + box.clientHeight) box.scrollTop = rect.top + rect.height - box.clientHeight;
+    if (rect.left < box.scrollLeft + ROW_HEADER_WIDTH) box.scrollLeft = rect.left - ROW_HEADER_WIDTH;
+    else if (rect.left + rect.width > box.scrollLeft + box.clientWidth) box.scrollLeft = rect.left + rect.width - box.clientWidth;
+    renderVisibleRows();
+  }
+
+  // --- Rendering ---
+  function displayValue(sheet, addr, cell) {
+    return cell.f ? formulas.value(sheet, addr) : (cell.v ?? '');
+  }
+
+  function isBlankForSpill(cell) {
+    return !cell || ((cell.v === undefined || cell.v === '') && !cell.f && !(cell.s && cell.s.bg));
+  }
+
+  function cellLook(sheet, addr, cell) {
+    const s = cell.s || {};
+    const value = displayValue(sheet, addr, cell);
+    const text = String(formatValue(value, s.format || 'general'));
+    const classes = ['grid-cell'];
+
+    let style = '';
+    if (s.bold) style += 'font-weight:600;';
+    if (s.italic) style += 'font-style:italic;';
+    if (s.color) style += `color:${s.color};`;
+    if (s.bg) style += `background-color:${s.bg};`;
+
+    let align = s.align;
+    if (!align) {
+      if (typeof value === 'number') align = 'right';
+      else if (typeof value === 'boolean' || (cell.f && ERROR_VALUE.test(text))) align = 'center';
+    }
+    if (align) style += `text-align:${align};`;
+    if (cell.f && ERROR_VALUE.test(text)) classes.push('is-error');
+    return { value, text, align, style, classes };
+  }
+
+  function cellHtml(sheet, r, c) {
+    const addr = coordToAddress(r, c);
+    const cell = sheet.cells[addr];
+    if (!cell) return `<td class="grid-cell" data-row="${r}" data-col="${c}" data-addr="${addr}"></td>`;
+
+    const { value, text, align, style, classes } = cellLook(sheet, addr, cell);
+
+    // renderMerges draws merged cells on screen. The text here is only for printing.
+    if (mergeAt(sheet, r, c)) {
+      return `<td class="grid-cell merge-anchor" data-row="${r}" data-col="${c}" data-addr="${addr}" style="${style}">` +
+        `<div class="cell-content">${escapeXml(text)}</div></td>`;
+    }
+
+    // Long text runs into empty cells on its right, as it does in Excel.
+    const isLeftText = typeof value === 'string' && (!align || align === 'left');
+    if (isLeftText && text.length * 7 > colWidth(sheet, c) - 16 && isBlankForSpill(sheet.cells[coordToAddress(r, c + 1)])) {
+      classes.push('spills');
+    }
+
+    return `<td class="${classes.join(' ')}" data-row="${r}" data-col="${c}" data-addr="${addr}" style="${style}">` +
+      `<div class="cell-content">${escapeXml(text)}</div></td>`;
+  }
+
+  function renderRowsInto(sheet, first, last) {
+    const spacer = (rows) => `<tr class="grid-spacer"><td colspan="${sheet.colCount + 1}" style="height:${rows * ROW_HEIGHT}px"></td></tr>`;
+    let html = first > 0 ? spacer(first) : '';
+    for (let r = first; r <= last; r++) {
+      html += `<tr data-r="${r}"><th class="row-header" data-row="${r}">${r + 1}</th>`;
+      for (let c = 0; c < sheet.colCount; c++) html += cellHtml(sheet, r, c);
+      html += '</tr>';
+    }
+    if (last < sheet.rowCount - 1) html += spacer(sheet.rowCount - 1 - last);
+
+    document.getElementById('gridBody').innerHTML = html;
+    renderedRows = { first, last };
+  }
+
+  function renderVisibleRows(force = false) {
+    const sheet = getActiveSheetData();
+    const body = document.getElementById('gridBody');
+    if (!sheet || !body) return;
+
+    const box = el.gridContainer;
+    const viewport = box.clientHeight || 800;
+    const firstVisible = Math.floor(Math.max(0, box.scrollTop - HEADER_HEIGHT) / ROW_HEIGHT);
+    const lastVisible = Math.min(sheet.rowCount - 1, Math.ceil((box.scrollTop + viewport) / ROW_HEIGHT));
+    if (!force && renderedRows && firstVisible >= renderedRows.first && lastVisible <= renderedRows.last) return;
+
+    renderRowsInto(sheet, Math.max(0, firstVisible - ROW_OVERSCAN), Math.min(sheet.rowCount - 1, lastVisible + ROW_OVERSCAN));
+    paintCellTints();
   }
 
   function renderGrid() {
-    const sheetData = getActiveSheetData();
-    if (!sheetData) return;
+    const sheet = getActiveSheetData();
+    if (!sheet) return;
 
-    const rowCount = sheetData.rowCount;
-    const colCount = sheetData.colCount;
+    normalizeSheet(sheet);
+    formulas.reset();
 
-    let html = '<thead><tr><th class="grid-corner"></th>';
-    for (let c = 0; c < colCount; c++) {
-      html += `<th class="col-header" data-col="${c}">${indexToCol(c)}</th>`;
+    colOffsets = [0];
+    let cols = `<col style="width:${ROW_HEADER_WIDTH}px">`;
+    let headers = '<th class="grid-corner" title="Select all"></th>';
+    for (let c = 0; c < sheet.colCount; c++) {
+      const width = colWidth(sheet, c);
+      colOffsets.push(colOffsets[c] + width);
+      cols += `<col data-col="${c}" style="width:${width}px">`;
+      headers += `<th class="col-header" data-col="${c}">${indexToCol(c)}<span class="col-resize" title="Drag to resize. Double click to fit."></span></th>`;
     }
-    html += '</tr></thead><tbody>';
 
-    for (let r = 0; r < rowCount; r++) {
-      html += `<tr><th class="row-header" data-row="${r}">${r + 1}</th>`;
-      for (let c = 0; c < colCount; c++) {
-        const addr = coordToAddress(r, c);
-        const cell = sheetData.cells[addr] || {};
-        const displayVal = cell.f ? evaluateFormula(cell.f, sheetData) : (cell.v || '');
-        const formatted = formatCellValue(displayVal, (cell.s && cell.s.format) || 'general');
+    el.spreadsheetGrid.style.width = `${ROW_HEADER_WIDTH + colOffsets[sheet.colCount]}px`;
+    el.spreadsheetGrid.innerHTML = `<colgroup>${cols}</colgroup><thead><tr>${headers}</tr></thead><tbody id="gridBody"></tbody>`;
 
-        let cellStyle = '';
-        if (cell.s) {
-          if (cell.s.bold) cellStyle += 'font-weight:bold;';
-          if (cell.s.italic) cellStyle += 'font-style:italic;';
-          if (cell.s.align) cellStyle += `text-align:${cell.s.align};`;
-          if (cell.s.color) cellStyle += `color:${cell.s.color};`;
-          if (cell.s.bg) cellStyle += `background-color:${cell.s.bg};`;
-        }
-
-        const isSelected = state.sheet.selectedCell.r === r && state.sheet.selectedCell.c === c;
-        html += `<td class="grid-cell ${isSelected ? 'selected' : ''}" data-row="${r}" data-col="${c}" data-addr="${addr}" style="${cellStyle}">` +
-          `<div class="cell-content">${escapeXml(String(formatted))}</div>` +
-          `</td>`;
-      }
-      html += '</tr>';
+    const active = state.sheet.selectedCell;
+    active.r = Math.min(active.r, sheet.rowCount - 1);
+    active.c = Math.min(active.c, sheet.colCount - 1);
+    if (state.sheet.rangeEnd) {
+      state.sheet.rangeEnd.r = Math.min(state.sheet.rangeEnd.r, sheet.rowCount - 1);
+      state.sheet.rangeEnd.c = Math.min(state.sheet.rangeEnd.c, sheet.colCount - 1);
     }
-    html += '</tbody>';
 
-    el.spreadsheetGrid.innerHTML = html;
+    renderVisibleRows(true);
+    renderMerges(sheet);
+    paintSelection();
     updateFormulaBar();
     updateSheetStats();
     renderSheetTabs();
+    syncUndoButtons();
   }
 
-  function selectCell(r, c) {
-    state.sheet.selectedCell = { r, c };
-    const prevSelected = el.spreadsheetGrid.querySelector('.grid-cell.selected');
-    if (prevSelected) prevSelected.classList.remove('selected');
-
-    const td = el.spreadsheetGrid.querySelector(`td[data-row="${r}"][data-col="${c}"]`);
-    if (td) {
-      td.classList.add('selected');
-      td.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  // Merged cells are drawn over the grid, so drawing only the visible rows cannot split them.
+  function renderMerges(sheet) {
+    el.gridContainer.querySelectorAll('.merge-cell').forEach((node) => node.remove());
+    const before = document.getElementById('selectionRange');
+    for (const m of sheet.merges || []) {
+      if (m.r1 >= sheet.rowCount || m.c1 >= sheet.colCount) continue;
+      const box = document.createElement('div');
+      box.className = 'merge-cell';
+      const addr = coordToAddress(m.r1, m.c1);
+      const cell = sheet.cells[addr];
+      if (cell) {
+        const look = cellLook(sheet, addr, cell);
+        box.className = ['merge-cell', ...look.classes.filter((name) => name !== 'grid-cell')].join(' ');
+        box.style.cssText = look.style;
+        const content = document.createElement('div');
+        content.className = 'cell-content';
+        content.textContent = look.text;
+        box.appendChild(content);
+      }
+      box.dataset.merge = `${m.r1},${m.c1},${m.r2},${m.c2}`;
+      placeBox(box, rectFor(m.r1, m.c1, Math.min(m.r2, sheet.rowCount - 1), Math.min(m.c2, sheet.colCount - 1)));
+      el.gridContainer.insertBefore(box, before);
     }
+  }
+
+  function paintCellTints() {
+    if (!renderedRows) return;
+    const body = document.getElementById('gridBody');
+    body.querySelectorAll('.in-range').forEach((td) => td.classList.remove('in-range'));
+    body.querySelectorAll('.is-active').forEach((th) => th.classList.remove('is-active'));
+
+    const range = getRange();
+    const active = state.sheet.selectedCell;
+    const single = isSingleSelection(range);
+
+    el.gridContainer.querySelectorAll('.merge-cell').forEach((box) => {
+      const [r1, c1, r2, c2] = box.dataset.merge.split(',').map(Number);
+      const inside = !single && r1 >= range.r1 && r2 <= range.r2 && c1 >= range.c1 && c2 <= range.c2;
+      const isActive = r1 === active.r && c1 === active.c;
+      box.classList.toggle('in-range', inside && !isActive);
+    });
+
+    for (const row of body.children) {
+      if (row.dataset.r === undefined) continue;
+      const r = Number(row.dataset.r);
+      if (r < range.r1 || r > range.r2) continue;
+      row.firstElementChild.classList.add('is-active');
+      if (single) continue;
+      for (let c = range.c1; c <= range.c2; c++) {
+        if (r !== active.r || c !== active.c) row.children[c + 1].classList.add('in-range');
+      }
+    }
+  }
+
+  function paintSelection() {
+    const range = getRange();
+    const active = state.sheet.selectedCell;
+    const single = isSingleSelection(range);
+
+    placeBox(document.getElementById('selectionRange'), rectFor(range.r1, range.c1, range.r2, range.c2), !single);
+    placeBox(document.getElementById('selectionActive'), mergeRect(getActiveSheetData(), active.r, active.c));
+
+    const corner = rectFor(range.r2, range.c2);
+    const handle = document.getElementById('fillHandle');
+    handle.style.transform = `translate(${corner.left + corner.width - 4}px, ${corner.top + corner.height - 4}px)`;
+
+    paintCopyBox();
+    paintCellTints();
+
+    el.spreadsheetGrid.querySelectorAll('.col-header.is-active').forEach((th) => th.classList.remove('is-active'));
+    const headers = el.spreadsheetGrid.querySelectorAll('.col-header');
+    for (let c = range.c1; c <= range.c2; c++) headers[c].classList.add('is-active');
+
+    el.cellAddress.value = single ? coordToAddress(active.r, active.c) : rangeLabel(range);
+  }
+
+  function paintCopyBox() {
+    const box = document.getElementById('copyBox');
+    if (refPick) {
+      const { anchor, end } = refPick;
+      placeBox(box, rectFor(Math.min(anchor.r, end.r), Math.min(anchor.c, end.c), Math.max(anchor.r, end.r), Math.max(anchor.c, end.c)));
+    } else if (dragState && dragState.type === 'fill' && dragState.target) {
+      const t = dragState.target;
+      placeBox(box, rectFor(t.r1, t.c1, t.r2, t.c2));
+    } else if (gridClipboard && gridClipboard.sheetName === state.sheet.activeSheet) {
+      const g = gridClipboard.range;
+      placeBox(box, rectFor(g.r1, g.c1, g.r2, g.c2));
+    } else {
+      box.hidden = true;
+    }
+  }
+
+  function selectRange(anchorR, anchorC, endR, endC) {
+    state.sheet.selectedCell = { r: anchorR, c: anchorC };
+    state.sheet.rangeEnd = { r: endR, c: endC };
+    paintSelection();
     updateFormulaBar();
     updateSheetStats();
   }
 
-  function updateFormulaBar() {
-    const sheetData = getActiveSheetData();
-    const { r, c } = state.sheet.selectedCell;
-    const addr = coordToAddress(r, c);
-    el.cellAddress.textContent = addr;
-
-    const cell = (sheetData && sheetData.cells[addr]) || {};
-    el.formulaInput.value = cell.f || cell.v || '';
-    syncSheetToolbar(cell, r, c);
+  function selectCell(r, c, { extend = false, scroll = true } = {}) {
+    const sheet = getActiveSheetData();
+    let row = Math.max(0, Math.min(sheet.rowCount - 1, r));
+    let col = Math.max(0, Math.min(sheet.colCount - 1, c));
+    const merge = !extend && mergeAt(sheet, row, col);
+    if (merge) {
+      row = merge.r1;
+      col = merge.c1;
+    }
+    if (extend) {
+      const a = state.sheet.selectedCell;
+      selectRange(a.r, a.c, row, col);
+    } else {
+      selectRange(row, col, row, col);
+    }
+    if (scroll) scrollCellIntoView(row, col);
   }
 
-  // Reflect the selected cell in the toolbar and in the row and column headers.
-  function syncSheetToolbar(cell, r, c) {
+  function rawInput(cell) {
+    if (!cell) return '';
+    return String(cell.f ?? cell.v ?? '');
+  }
+
+  function updateFormulaBar() {
+    if (formulaEdit || cellEditor) return;
+    const sheet = getActiveSheetData();
+    const { r, c } = state.sheet.selectedCell;
+    const cell = (sheet && sheet.cells[coordToAddress(r, c)]) || null;
+    el.formulaInput.value = rawInput(cell);
+    syncSheetToolbar(cell || {});
+  }
+
+  // Reflect the active cell in the toolbar.
+  function syncSheetToolbar(cell) {
     const style = cell.s || {};
     setPressed('sheetBold', !!style.bold);
     setPressed('sheetItalic', !!style.italic);
@@ -1054,102 +1055,584 @@
     setPressed('sheetAlignCenter', style.align === 'center');
     setPressed('sheetAlignRight', style.align === 'right');
     document.getElementById('sheetNumberFormat').value = style.format || 'general';
-
-    el.spreadsheetGrid.querySelectorAll('.is-active').forEach((th) => th.classList.remove('is-active'));
-    const colHeader = el.spreadsheetGrid.querySelector(`.col-header[data-col="${c}"]`);
-    const rowHeader = el.spreadsheetGrid.querySelector(`.row-header[data-row="${r}"]`);
-    if (colHeader) colHeader.classList.add('is-active');
-    if (rowHeader) rowHeader.classList.add('is-active');
+    const { r, c } = state.sheet.selectedCell;
+    setPressed('sheetMerge', !!mergeAt(getActiveSheetData(), r, c));
   }
 
-  function setCellVal(r, c, inputVal) {
-    const sheetData = getActiveSheetData();
-    if (!sheetData) return;
-    writeCellInput(sheetData, r, c, inputVal);
-    markSheetModified();
-    renderGrid();
-  }
+  function updateSheetStats() {
+    const sheet = getActiveSheetData();
+    if (!sheet) return;
+    const range = getRange();
+    const single = range.r1 === range.r2 && range.c1 === range.c2;
 
-  function writeCellInput(sheetData, r, c, inputVal) {
-    const addr = coordToAddress(r, c);
+    if (single) {
+      const addr = coordToAddress(range.r1, range.c1);
+      const cell = sheet.cells[addr];
+      const value = cell ? displayValue(sheet, addr, cell) : '';
+      const filled = Object.values(sheet.cells).filter((item) => rawInput(item) !== '').length;
+      el.sheetStatCell.textContent = `Cell: ${addr}`;
+      el.sheetStatSum.textContent = `Value: ${value === '' ? '(empty)' : formatValue(value, (cell.s && cell.s.format) || 'general')}`;
+      el.sheetStatCount.textContent = `Cells filled: ${filled}`;
+      return;
+    }
 
-    if (!inputVal || inputVal.trim() === '') {
-      delete sheetData.cells[addr];
-    } else {
-      if (!sheetData.cells[addr]) {
-        sheetData.cells[addr] = { s: {} };
+    let sum = 0;
+    let numbers = 0;
+    let count = 0;
+    forEachExistingCell(sheet, range, (addr, cell) => {
+      const value = displayValue(sheet, addr, cell);
+      if (value === '') return;
+      count++;
+      if (typeof value === 'number') {
+        sum += value;
+        numbers++;
       }
-      const cell = sheetData.cells[addr];
-      if (inputVal.startsWith('=')) {
-        cell.f = inputVal.toUpperCase();
-        cell.v = evaluateFormula(cell.f, sheetData);
-      } else {
-        delete cell.f;
-        cell.v = isNaN(Number(inputVal)) ? inputVal : Number(inputVal);
+    });
+    const pretty = (n) => n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+    el.sheetStatCell.textContent = numbers ? `Average: ${pretty(sum / numbers)}` : 'Average: none';
+    el.sheetStatSum.textContent = `Sum: ${pretty(sum)}`;
+    el.sheetStatCount.textContent = `Count: ${count}`;
+  }
+
+  function forEachExistingCell(sheet, range, callback) {
+    const area = (range.r2 - range.r1 + 1) * (range.c2 - range.c1 + 1);
+    const keys = Object.keys(sheet.cells);
+    if (area > keys.length) {
+      keys.forEach((addr) => {
+        const { r, c } = addressToCoord(addr);
+        if (r >= range.r1 && r <= range.r2 && c >= range.c1 && c <= range.c2) callback(addr, sheet.cells[addr], r, c);
+      });
+      return;
+    }
+    for (let r = range.r1; r <= range.r2; r++) {
+      for (let c = range.c1; c <= range.c2; c++) {
+        const addr = coordToAddress(r, c);
+        if (sheet.cells[addr]) callback(addr, sheet.cells[addr], r, c);
       }
     }
   }
 
-  // Keeps empty rows and columns off the printed page. The grid's next render clears the marks.
+  // --- Undo ---
+  function snapshot() {
+    const { sheetNames, sheets, activeSheet, selectedCell, rangeEnd } = state.sheet;
+    return JSON.stringify({ sheetNames, sheets, activeSheet, selectedCell, rangeEnd });
+  }
+
+  function pushUndo() {
+    undoStack.push(snapshot());
+    redoStack = [];
+    let bytes = undoStack.reduce((total, entry) => total + entry.length, 0);
+    while (undoStack.length > 1 && (undoStack.length > MAX_UNDO_STEPS || bytes > MAX_UNDO_BYTES)) {
+      bytes -= undoStack.shift().length;
+    }
+  }
+
+  function restoreSnapshot(json) {
+    Object.assign(state.sheet, JSON.parse(json));
+    gridClipboard = null;
+    markSheetModified();
+    renderGrid();
+    const { r, c } = state.sheet.selectedCell;
+    scrollCellIntoView(r, c);
+  }
+
+  function undoSheet() {
+    commitPendingEdit();
+    if (!undoStack.length) return;
+    redoStack.push(snapshot());
+    restoreSnapshot(undoStack.pop());
+  }
+
+  function redoSheet() {
+    commitPendingEdit();
+    if (!redoStack.length) return;
+    undoStack.push(snapshot());
+    restoreSnapshot(redoStack.pop());
+  }
+
+  function syncUndoButtons() {
+    document.getElementById('sheetUndo').disabled = !undoStack.length;
+    document.getElementById('sheetRedo').disabled = !redoStack.length;
+  }
+
+  // Forgets edit history and view state when a different workbook is loaded.
+  function resetSheetView() {
+    undoStack = [];
+    redoStack = [];
+    gridClipboard = null;
+    state.sheet.selectedCell = { r: 0, c: 0 };
+    state.sheet.rangeEnd = { r: 0, c: 0 };
+    el.gridContainer.scrollTop = 0;
+    el.gridContainer.scrollLeft = 0;
+  }
+
+  /** Runs one undoable change to the workbook and redraws. */
+  function mutate(change, { keepClipboard = false } = {}) {
+    pushUndo();
+    change(getActiveSheetData());
+    if (!keepClipboard) gridClipboard = null;
+    markSheetModified();
+    renderGrid();
+  }
+
+  // --- Cell values ---
+  function writeCellInput(sheet, r, c, input) {
+    const addr = coordToAddress(r, c);
+    const text = input === null || input === undefined ? '' : String(input);
+    const existing = sheet.cells[addr];
+
+    if (text.trim() === '') {
+      if (!existing) return;
+      if (existing.s && Object.keys(existing.s).length) {
+        delete existing.f;
+        delete existing.v;
+      } else {
+        delete sheet.cells[addr];
+      }
+      return;
+    }
+
+    const cell = existing || (sheet.cells[addr] = { s: {} });
+    if (!cell.s) cell.s = {};
+
+    if (text.length > 1 && text.startsWith('=')) {
+      cell.f = text;
+      delete cell.v;
+      return;
+    }
+
+    delete cell.f;
+    if (cell.s.format === 'text') {
+      cell.v = text;
+      return;
+    }
+    const parsed = parseInput(text);
+    cell.v = parsed.value;
+    if (parsed.format && (!cell.s.format || cell.s.format === 'general')) cell.s.format = parsed.format;
+  }
+
+  function setCellVal(r, c, inputVal) {
+    const sheet = getActiveSheetData();
+    if (!sheet || rawInput(sheet.cells[coordToAddress(r, c)]) === String(inputVal ?? '')) {
+      renderGrid();
+      return;
+    }
+    mutate((current) => writeCellInput(current, r, c, inputVal));
+  }
+
+  function clearSelection() {
+    const sheet = getActiveSheetData();
+    const range = getRange();
+    let hasContent = false;
+    forEachExistingCell(sheet, range, (addr, cell) => {
+      if (rawInput(cell) !== '') hasContent = true;
+    });
+    if (!hasContent) return;
+    mutate((current) => {
+      const targets = [];
+      forEachExistingCell(current, range, (addr, cell, r, c) => targets.push([r, c]));
+      targets.forEach(([r, c]) => writeCellInput(current, r, c, ''));
+    });
+  }
+
+  // --- Print ---
+  // Draws every row with data and keeps empty rows and columns off the printed page.
   function markPrintRange() {
+    const sheet = getActiveSheetData();
     let lastRow = -1;
     let lastCol = -1;
-    Object.keys(getActiveSheetData().cells).forEach((addr) => {
+    Object.keys(sheet.cells).forEach((addr) => {
       const { r, c } = addressToCoord(addr);
+      if (rawInput(sheet.cells[addr]) === '' && !(sheet.cells[addr].s && sheet.cells[addr].s.bg)) return;
       lastRow = Math.max(lastRow, r);
       lastCol = Math.max(lastCol, c);
     });
 
-    el.spreadsheetGrid.querySelectorAll('tbody tr').forEach((row, r) => {
-      row.classList.toggle('print-hidden', r > lastRow);
+    const visibleLast = renderedRows ? renderedRows.last : 0;
+    renderRowsInto(sheet, 0, Math.max(lastRow, visibleLast));
+    paintCellTints();
+
+    el.spreadsheetGrid.querySelectorAll('#gridBody tr').forEach((row) => {
+      row.classList.toggle('print-hidden', row.dataset.r === undefined || Number(row.dataset.r) > lastRow);
     });
     el.spreadsheetGrid.querySelectorAll('[data-col]').forEach((cell) => {
       cell.classList.toggle('print-hidden', Number(cell.dataset.col) > lastCol);
     });
   }
 
-  // --- Spreadsheet Clipboard ---
-  const CELL_CLIPBOARD_TYPE = 'application/x-officelite-cell';
+  // --- Editing: the cell editor and formula bar ---
+  function activeEditInput() {
+    if (cellEditor) return cellEditor.input;
+    return document.activeElement === el.formulaInput ? el.formulaInput : null;
+  }
 
+  // Clicking a cell inserts its address when the caret sits where a reference can go.
+  function canPickReference(input) {
+    if (!input.value.startsWith('=')) return false;
+    if (refPick && refPick.input === input) return true;
+    const before = input.value.slice(0, input.selectionStart);
+    return /[=(,;+\-*/^&<>:]\s*$/.test(before);
+  }
+
+  function writePickedReference(endCell) {
+    const { input, start, anchor } = refPick;
+    const label = rangeLabel({
+      r1: Math.min(anchor.r, endCell.r), c1: Math.min(anchor.c, endCell.c),
+      r2: Math.max(anchor.r, endCell.r), c2: Math.max(anchor.c, endCell.c)
+    });
+    const after = refPick.end === undefined ? input.selectionStart : refPick.textEnd;
+    input.value = input.value.slice(0, start) + label + input.value.slice(after);
+    refPick.textEnd = start + label.length;
+    refPick.end = endCell;
+    input.setSelectionRange(refPick.textEnd, refPick.textEnd);
+    if (input !== el.formulaInput) el.formulaInput.value = input.value;
+    paintCopyBox();
+  }
+
+  function clearRefPick() {
+    if (!refPick) return;
+    refPick = null;
+    paintCopyBox();
+  }
+
+  function startCellEdit(initialText = null) {
+    commitPendingEdit();
+    const sheet = getActiveSheetData();
+    const { r, c } = state.sheet.selectedCell;
+    scrollCellIntoView(r, c);
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'cell-editor';
+    input.spellcheck = false;
+    input.setAttribute('aria-label', `Edit ${coordToAddress(r, c)}`);
+    input.value = initialText !== null ? initialText : rawInput(sheet.cells[coordToAddress(r, c)]);
+
+    const rect = mergeRect(sheet, r, c);
+    input.style.transform = `translate(${rect.left}px, ${rect.top}px)`;
+    input.style.height = `${rect.height}px`;
+    const fit = () => {
+      input.style.width = `${rect.width}px`;
+      input.style.width = `${Math.max(rect.width, Math.min(input.scrollWidth + 16, 640))}px`;
+    };
+
+    cellEditor = { input, r, c, typed: initialText !== null };
+    el.gridContainer.appendChild(input);
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+    el.formulaInput.value = input.value;
+    fit();
+
+    input.addEventListener('input', () => {
+      refPick = null;
+      el.formulaInput.value = input.value;
+      fit();
+      paintCopyBox();
+    });
+    // Switching to another app also blurs the input, but that must not end the edit.
+    input.addEventListener('blur', () => {
+      if (document.hasFocus()) finishCellEdit(true);
+    });
+    input.addEventListener('keydown', (e) => {
+      const moves = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finishCellEdit(true);
+        const to = stepFrom(r, c, e.shiftKey ? -1 : 1, 0);
+        selectCell(to.r, to.c);
+      } else if (e.key === 'Tab') {
+        e.preventDefault();
+        finishCellEdit(true);
+        const to = stepFrom(r, c, 0, e.shiftKey ? -1 : 1);
+        selectCell(to.r, to.c);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finishCellEdit(false);
+      } else if (moves[e.key] && cellEditor && cellEditor.typed && !input.value.startsWith('=')) {
+        e.preventDefault();
+        finishCellEdit(true);
+        const to = stepFrom(r, c, moves[e.key][0], moves[e.key][1]);
+        selectCell(to.r, to.c);
+      }
+    });
+  }
+
+  function finishCellEdit(commit) {
+    if (!cellEditor) return;
+    const { input, r, c } = cellEditor;
+    cellEditor = null;
+    const value = input.value;
+    input.remove();
+    clearRefPick();
+    if (commit) setCellVal(r, c, value);
+    else updateFormulaBar();
+  }
+
+  function commitFormulaBar() {
+    if (!formulaEdit) return;
+    const { r, c, original } = formulaEdit;
+    formulaEdit = null;
+    clearRefPick();
+    if (el.formulaInput.value !== original) setCellVal(r, c, el.formulaInput.value);
+    else updateFormulaBar();
+  }
+
+  function commitPendingEdit() {
+    finishCellEdit(true);
+    commitFormulaBar();
+  }
+
+  // --- Applying formatting to the selection ---
+  function setCellFormatProperty(prop, value) {
+    const range = getRange();
+    mutate((sheet) => {
+      for (let r = range.r1; r <= range.r2; r++) {
+        for (let c = range.c1; c <= range.c2; c++) {
+          const addr = coordToAddress(r, c);
+          const cell = sheet.cells[addr] || (sheet.cells[addr] = { s: {} });
+          if (!cell.s) cell.s = {};
+          if (value === false || value === '') delete cell.s[prop];
+          else cell.s[prop] = value;
+        }
+      }
+    });
+  }
+
+  function toggleCellFormat(prop) {
+    const sheet = getActiveSheetData();
+    const { r, c } = state.sheet.selectedCell;
+    const cell = sheet.cells[coordToAddress(r, c)];
+    setCellFormatProperty(prop, !(cell && cell.s && cell.s[prop]));
+  }
+
+  // --- Rows and columns ---
+  function changeStructure(axis, at, count) {
+    const owner = state.sheet.activeSheet;
+    mutate((sheet) => {
+      const moved = {};
+      const key = axis === 'row' ? 'r' : 'c';
+      const removed = -count;
+      for (const [addr, cell] of Object.entries(sheet.cells)) {
+        const coord = addressToCoord(addr);
+        if (count > 0) {
+          if (coord[key] >= at) coord[key] += count;
+        } else if (coord[key] >= at + removed) {
+          coord[key] -= removed;
+        } else if (coord[key] >= at) {
+          continue;
+        }
+        moved[coordToAddress(coord.r, coord.c)] = cell;
+      }
+      sheet.cells = moved;
+      if (sheet.merges) {
+        sheet.merges = sheet.merges.map((m) => shiftMerge(m, axis, at, count)).filter(Boolean);
+      }
+
+      if (axis === 'row') {
+        sheet.rowCount += count;
+      } else {
+        sheet.colCount += count;
+        const widths = {};
+        for (const [index, width] of Object.entries(sheet.colWidths)) {
+          const c = Number(index);
+          if (count > 0) widths[c >= at ? c + count : c] = width;
+          else if (c >= at + removed) widths[c - removed] = width;
+          else if (c < at) widths[c] = width;
+        }
+        sheet.colWidths = widths;
+      }
+
+      // Formulas on every sheet can point at what just moved.
+      state.sheet.sheetNames.forEach((name) => {
+        Object.values(state.sheet.sheets[name].cells).forEach((cell) => {
+          if (cell.f) cell.f = adjustReferences(cell.f, name, owner, axis, at, count);
+        });
+      });
+    });
+  }
+
+  function insertRows(position) {
+    const range = getRange();
+    const count = range.r2 - range.r1 + 1;
+    changeStructure('row', position === 'above' ? range.r1 : range.r2 + 1, count);
+  }
+
+  function insertCols(position) {
+    const range = getRange();
+    const count = range.c2 - range.c1 + 1;
+    changeStructure('col', position === 'left' ? range.c1 : range.c2 + 1, count);
+  }
+
+  function deleteRows() {
+    const range = getRange();
+    changeStructure('row', range.r1, -(range.r2 - range.r1 + 1));
+    selectCell(range.r1, state.sheet.selectedCell.c);
+  }
+
+  function deleteCols() {
+    const range = getRange();
+    changeStructure('col', range.c1, -(range.c2 - range.c1 + 1));
+    selectCell(state.sheet.selectedCell.r, range.c1);
+  }
+
+  function mergesInside(sheet, range) {
+    return (sheet.merges || []).filter((m) =>
+      m.r1 >= range.r1 && m.r2 <= range.r2 && m.c1 >= range.c1 && m.c2 <= range.c2);
+  }
+
+  /** Merges the selected cells, or unmerges them when the selection holds a merged cell. */
+  function toggleMerge() {
+    commitPendingEdit();
+    const sheet = getActiveSheetData();
+    const range = getRange();
+    const existing = mergesInside(sheet, range);
+
+    if (existing.length) {
+      mutate((current) => {
+        current.merges = current.merges.filter((m) => !existing.includes(m));
+      });
+      selectRange(range.r1, range.c1, range.r2, range.c2);
+      return;
+    }
+    if (range.r1 === range.r2 && range.c1 === range.c2) {
+      showToast('Select two or more cells to merge them.');
+      return;
+    }
+
+    let otherValues = false;
+    forEachExistingCell(sheet, range, (addr, cell, r, c) => {
+      if ((r !== range.r1 || c !== range.c1) && rawInput(cell) !== '') otherValues = true;
+    });
+
+    const merge = () => {
+      mutate((current) => {
+        forEachExistingCell(current, range, (addr, cell, r, c) => {
+          if (r !== range.r1 || c !== range.c1) delete current.cells[addr];
+        });
+        current.merges = (current.merges || []).concat([{ ...range }]);
+      });
+      selectCell(range.r1, range.c1, { scroll: false });
+    };
+
+    if (!otherValues) {
+      merge();
+      return;
+    }
+    confirmDialog({
+      title: 'Merge these cells?',
+      message: 'The merged cell keeps only the value in the upper left cell. The other values are removed.',
+      confirmLabel: 'Merge cells'
+    }).then((confirmed) => {
+      if (confirmed) merge();
+    });
+  }
+
+  function fittedColWidth(sheet, c) {
+    let longest = 0;
+    for (const [addr, cell] of Object.entries(sheet.cells)) {
+      const coord = addressToCoord(addr);
+      if (coord.c !== c) continue;
+      const merge = mergeAt(sheet, coord.r, coord.c);
+      if (merge && merge.c2 > merge.c1) continue;
+      const text = String(formatValue(displayValue(sheet, addr, cell), (cell.s && cell.s.format) || 'general'));
+      const weight = cell.s && cell.s.bold ? 8.5 : 8;
+      longest = Math.max(longest, text.length * weight);
+    }
+    return Math.max(DEFAULT_COL_WIDTH, Math.min(MAX_AUTO_COL_WIDTH, Math.ceil(longest + 20)));
+  }
+
+  function autoSizeColumns(sheet) {
+    normalizeSheet(sheet);
+    const used = new Set(Object.keys(sheet.cells).map((addr) => addressToCoord(addr).c));
+    used.forEach((c) => {
+      if (!sheet.colWidths[c]) sheet.colWidths[c] = fittedColWidth(sheet, c);
+    });
+  }
+
+  // --- Spreadsheet clipboard ---
   function gridHasFocus() {
-    if (state.mode !== 'sheet' || state.sheet.editingCell) return false;
+    if (state.mode !== 'sheet' || cellEditor || formulaEdit) return false;
     if (document.querySelector('.modal-overlay.active')) return false;
     const active = document.activeElement;
     return !(active && active.closest('input, select, textarea, [contenteditable="true"]'));
   }
 
-  function copySelectedCell(clipboardData) {
-    const sheetData = getActiveSheetData();
-    const { r, c } = state.sheet.selectedCell;
-    const cell = sheetData.cells[coordToAddress(r, c)] || {};
-    const value = cell.f ? evaluateFormula(cell.f, sheetData) : (cell.v ?? '');
-    const format = (cell.s && cell.s.format) || 'general';
-    // Plain text for other apps, the full cell for pasting back into OfficeLite.
-    clipboardData.setData('text/plain', String(formatCellValue(value, format)));
-    clipboardData.setData(CELL_CLIPBOARD_TYPE, JSON.stringify(cell));
+  function copySelection(clipboardData, cut) {
+    const sheet = getActiveSheetData();
+    const range = getRange();
+    const lines = [];
+    const matrix = [];
+    for (let r = range.r1; r <= range.r2; r++) {
+      const texts = [];
+      const row = [];
+      for (let c = range.c1; c <= range.c2; c++) {
+        const addr = coordToAddress(r, c);
+        const cell = sheet.cells[addr];
+        row.push(cell ? JSON.parse(JSON.stringify(cell)) : null);
+        texts.push(cell ? String(formatValue(displayValue(sheet, addr, cell), (cell.s && cell.s.format) || 'general')) : '');
+      }
+      lines.push(texts.join('\t'));
+      matrix.push(row);
+    }
+    const text = lines.join('\n');
+    clipboardData.setData('text/plain', text);
+    gridClipboard = { text, matrix, range, cut, sheetName: state.sheet.activeSheet };
+    paintCopyBox();
   }
 
   function pasteIntoGrid(clipboardData) {
-    const sheetData = getActiveSheetData();
-    const { r, c } = state.sheet.selectedCell;
-    const rawCell = clipboardData.getData(CELL_CLIPBOARD_TYPE);
+    const text = clipboardData.getData('text/plain');
+    if (!text) return;
+    const target = getRange();
+    const source = gridClipboard && gridClipboard.text === text ? gridClipboard : null;
 
-    if (rawCell) {
-      sheetData.cells[coordToAddress(r, c)] = JSON.parse(rawCell);
-    } else {
-      // Rows and columns copied from Excel, Numbers, or a web table arrive as tab separated text.
-      const rows = clipboardData.getData('text/plain').replace(/\r?\n$/, '').split(/\r?\n/);
-      rows.forEach((row, rowOffset) => {
-        row.split('\t').forEach((value, colOffset) => {
-          sheetData.rowCount = Math.max(sheetData.rowCount, r + rowOffset + 1);
-          sheetData.colCount = Math.max(sheetData.colCount, c + colOffset + 1);
-          writeCellInput(sheetData, r + rowOffset, c + colOffset, value);
+    mutate((sheet) => {
+      if (source) {
+        const rows = source.matrix.length;
+        const cols = source.matrix[0].length;
+        const oneCell = rows === 1 && cols === 1;
+        const lastR = oneCell ? target.r2 : target.r1 + rows - 1;
+        const lastC = oneCell ? target.c2 : target.c1 + cols - 1;
+
+        if (source.cut) {
+          const from = state.sheet.sheets[source.sheetName];
+          if (from) forEachExistingCell(from, source.range, (addr) => delete from.cells[addr]);
+        }
+
+        for (let r = target.r1; r <= lastR; r++) {
+          for (let c = target.c1; c <= lastC; c++) {
+            const addr = coordToAddress(r, c);
+            const original = source.matrix[oneCell ? 0 : r - target.r1][oneCell ? 0 : c - target.c1];
+            if (!original) {
+              delete sheet.cells[addr];
+              continue;
+            }
+            const cell = JSON.parse(JSON.stringify(original));
+            if (cell.f && !source.cut) {
+              const fromR = source.range.r1 + (oneCell ? 0 : r - target.r1);
+              const fromC = source.range.c1 + (oneCell ? 0 : c - target.c1);
+              cell.f = shiftRelative(cell.f, r - fromR, c - fromC);
+            }
+            sheet.cells[addr] = cell;
+          }
+        }
+        sheet.rowCount = Math.max(sheet.rowCount, lastR + 1);
+        sheet.colCount = Math.max(sheet.colCount, lastC + 1);
+        state.sheet.selectedCell = { r: target.r1, c: target.c1 };
+        state.sheet.rangeEnd = { r: lastR, c: lastC };
+      } else {
+        // Rows and columns from Excel, Numbers, or a web table arrive as tab separated text.
+        const rows = text.replace(/\r?\n$/, '').split(/\r?\n/).map((row) => row.split('\t'));
+        const width = Math.max(...rows.map((row) => row.length));
+        rows.forEach((row, rowOffset) => {
+          row.forEach((value, colOffset) => writeCellInput(sheet, target.r1 + rowOffset, target.c1 + colOffset, value));
         });
-      });
-    }
-
-    markSheetModified();
-    renderGrid();
+        sheet.rowCount = Math.max(sheet.rowCount, target.r1 + rows.length);
+        sheet.colCount = Math.max(sheet.colCount, target.c1 + width);
+        state.sheet.selectedCell = { r: target.r1, c: target.c1 };
+        state.sheet.rangeEnd = { r: target.r1 + rows.length - 1, c: target.c1 + width - 1 };
+      }
+    }, { keepClipboard: !!source && !source.cut });
   }
 
   function initGridClipboard() {
@@ -1163,15 +1646,13 @@
     document.addEventListener('copy', (e) => {
       if (!gridHasFocus()) return;
       e.preventDefault();
-      copySelectedCell(e.clipboardData);
+      copySelection(e.clipboardData, false);
     });
 
     document.addEventListener('cut', (e) => {
       if (!gridHasFocus()) return;
       e.preventDefault();
-      copySelectedCell(e.clipboardData);
-      const { r, c } = state.sheet.selectedCell;
-      setCellVal(r, c, '');
+      copySelection(e.clipboardData, true);
     });
 
     document.addEventListener('paste', (e) => {
@@ -1181,22 +1662,90 @@
     });
   }
 
-  function updateSheetStats() {
-    const sheetData = getActiveSheetData();
-    const { r, c } = state.sheet.selectedCell;
-    const addr = coordToAddress(r, c);
-    el.sheetStatCell.textContent = `Cell: ${addr}`;
-
-    const cell = (sheetData && sheetData.cells[addr]) || {};
-    const val = cell.f ? evaluateFormula(cell.f, sheetData) : cell.v;
-    const num = parseFloat(val);
-    el.sheetStatSum.textContent = !isNaN(num) ? `Value: ${num.toLocaleString()}` : `Value: ${val || '(empty)'}`;
-
-    // Count non-empty cells
-    const count = Object.keys(sheetData.cells).length;
-    el.sheetStatCount.textContent = `Cells filled: ${count}`;
+  // --- Fill handle ---
+  function numericSeriesStep(values) {
+    if (values.length < 2 || values.some((v) => typeof v !== 'number')) return null;
+    const step = values[1] - values[0];
+    return values.every((v, i) => i === 0 || Math.abs(v - values[i - 1] - step) < 1e-9) ? step : null;
   }
 
+  function applyFill(source, target) {
+    mutate((sheet) => {
+      const vertical = target.c1 === source.c1 && target.c2 === source.c2;
+      const sourceCell = (r, c) => sheet.cells[coordToAddress(r, c)];
+      const lanes = vertical ? [source.c1, source.c2] : [source.r1, source.r2];
+
+      for (let lane = lanes[0]; lane <= lanes[1]; lane++) {
+        const length = vertical ? source.r2 - source.r1 + 1 : source.c2 - source.c1 + 1;
+        const start = vertical ? source.r1 : source.c1;
+        const cellAt = (i) => (vertical ? sourceCell(start + i, lane) : sourceCell(lane, start + i));
+        const values = [];
+        for (let i = 0; i < length; i++) {
+          const cell = cellAt(i);
+          values.push(cell && !cell.f ? cell.v : undefined);
+        }
+        const step = numericSeriesStep(values);
+
+        const from = vertical ? target.r1 : target.c1;
+        const to = vertical ? target.r2 : target.c2;
+        const snapshotCells = values.map((_, i) => {
+          const cell = cellAt(i);
+          return cell ? JSON.parse(JSON.stringify(cell)) : null;
+        });
+
+        for (let pos = from; pos <= to; pos++) {
+          if (pos >= start && pos < start + length) continue;
+          const offset = pos - start;
+          const index = ((offset % length) + length) % length;
+          const addr = vertical ? coordToAddress(pos, lane) : coordToAddress(lane, pos);
+          const template = snapshotCells[index];
+          if (!template) {
+            delete sheet.cells[addr];
+            continue;
+          }
+          const cell = JSON.parse(JSON.stringify(template));
+          if (cell.f) {
+            const distance = pos - (start + index);
+            cell.f = vertical ? shiftRelative(cell.f, distance, 0) : shiftRelative(cell.f, 0, distance);
+          } else if (step !== null) {
+            cell.v = values[0] + step * offset;
+          }
+          sheet.cells[addr] = cell;
+        }
+      }
+      state.sheet.selectedCell = { r: target.r1, c: target.c1 };
+      state.sheet.rangeEnd = { r: target.r2, c: target.c2 };
+    });
+  }
+
+  // --- AutoSum ---
+  function runAutoSum() {
+    commitPendingEdit();
+    const sheet = getActiveSheetData();
+    const { r, c } = state.sheet.selectedCell;
+    formulas.reset();
+    const isNumber = (row, col) => {
+      const addr = coordToAddress(row, col);
+      const cell = sheet.cells[addr];
+      return !!cell && typeof displayValue(sheet, addr, cell) === 'number';
+    };
+
+    let top = r;
+    while (top > 0 && isNumber(top - 1, c)) top--;
+    if (top < r) {
+      setCellVal(r, c, `=SUM(${coordToAddress(top, c)}:${coordToAddress(r - 1, c)})`);
+      return;
+    }
+    let left = c;
+    while (left > 0 && isNumber(r, left - 1)) left--;
+    if (left < c) {
+      setCellVal(r, c, `=SUM(${coordToAddress(r, left)}:${coordToAddress(r, c - 1)})`);
+      return;
+    }
+    startCellEdit('=SUM(');
+  }
+
+  // --- Sheet tabs ---
   function renderSheetTabs() {
     el.tabsList.innerHTML = '';
     state.sheet.sheetNames.forEach(name => {
@@ -1220,10 +1769,7 @@
         }
         if (e.target.closest('.sheet-tab-input')) return;
         // Rebuilding the active tab here would swallow the double click that renames it.
-        if (name !== state.sheet.activeSheet) {
-          state.sheet.activeSheet = name;
-          renderGrid();
-        }
+        if (name !== state.sheet.activeSheet) switchSheet(name);
       };
 
       tab.onkeydown = (e) => {
@@ -1234,6 +1780,26 @@
 
       el.tabsList.appendChild(tab);
     });
+  }
+
+  function switchSheet(name) {
+    commitPendingEdit();
+    const current = getActiveSheetData();
+    if (current) {
+      current.view = {
+        selectedCell: state.sheet.selectedCell,
+        rangeEnd: state.sheet.rangeEnd,
+        scrollTop: el.gridContainer.scrollTop,
+        scrollLeft: el.gridContainer.scrollLeft
+      };
+    }
+    state.sheet.activeSheet = name;
+    const view = getActiveSheetData().view || {};
+    state.sheet.selectedCell = view.selectedCell || { r: 0, c: 0 };
+    state.sheet.rangeEnd = view.rangeEnd || { ...state.sheet.selectedCell };
+    el.gridContainer.scrollTop = view.scrollTop || 0;
+    el.gridContainer.scrollLeft = view.scrollLeft || 0;
+    renderGrid();
   }
 
   function startTabRename(tab, name) {
@@ -1269,60 +1835,391 @@
   }
 
   function addSheet(name = null) {
+    commitPendingEdit();
     let newName = name;
     if (!newName) {
       let i = state.sheet.sheetNames.length + 1;
       while (state.sheet.sheetNames.includes(`Sheet${i}`)) i++;
       newName = `Sheet${i}`;
     }
+    pushUndo();
     state.sheet.sheetNames.push(newName);
-    state.sheet.sheets[newName] = {
-      cells: {},
-      rowCount: 40,
-      colCount: 20
-    };
-    state.sheet.activeSheet = newName;
+    state.sheet.sheets[newName] = { cells: {}, rowCount: MIN_ROWS, colCount: MIN_COLS, colWidths: {} };
     markSheetModified();
-    renderGrid();
-    showToast(`Added ${newName}`);
+    switchSheet(newName);
   }
 
   function renameSheet(oldName, newName) {
-    if (state.sheet.sheetNames.includes(newName)) {
+    const taken = state.sheet.sheetNames.some((n) => n.toLowerCase() === newName.toLowerCase() && n !== oldName);
+    if (taken) {
       showToast(`A sheet named ${newName} already exists`, 'error');
       renderSheetTabs();
       return;
     }
-    const idx = state.sheet.sheetNames.indexOf(oldName);
-    state.sheet.sheetNames[idx] = newName;
-    state.sheet.sheets[newName] = state.sheet.sheets[oldName];
-    delete state.sheet.sheets[oldName];
-    if (state.sheet.activeSheet === oldName) state.sheet.activeSheet = newName;
-    markSheetModified();
-    renderGrid();
+    mutate(() => {
+      const idx = state.sheet.sheetNames.indexOf(oldName);
+      state.sheet.sheetNames[idx] = newName;
+      state.sheet.sheets[newName] = state.sheet.sheets[oldName];
+      delete state.sheet.sheets[oldName];
+      if (state.sheet.activeSheet === oldName) state.sheet.activeSheet = newName;
+      Object.values(state.sheet.sheets).forEach((sheet) => {
+        Object.values(sheet.cells).forEach((cell) => {
+          if (cell.f) cell.f = renameSheetReferences(cell.f, oldName, newName);
+        });
+      });
+    });
   }
 
   function deleteSheet(name) {
     if (state.sheet.sheetNames.length <= 1) return;
     confirmDialog({
       title: `Delete ${name}?`,
-      message: 'Everything on this sheet will be removed. You cannot undo this.',
+      message: 'Everything on this sheet will be removed. Formulas that use it will show #REF!.',
       confirmLabel: 'Delete sheet'
     }).then((confirmed) => {
       if (!confirmed) return;
+      commitPendingEdit();
+      pushUndo();
       state.sheet.sheetNames = state.sheet.sheetNames.filter(n => n !== name);
       delete state.sheet.sheets[name];
-      if (state.sheet.activeSheet === name) {
-        state.sheet.activeSheet = state.sheet.sheetNames[0];
-      }
+      Object.values(state.sheet.sheets).forEach((sheet) => {
+        Object.values(sheet.cells).forEach((cell) => {
+          if (cell.f) cell.f = removeSheetReferences(cell.f, name);
+        });
+      });
       markSheetModified();
-      renderGrid();
+      if (state.sheet.activeSheet === name) {
+        state.sheet.activeSheet = null;
+        switchSheet(state.sheet.sheetNames[0]);
+      } else {
+        renderGrid();
+      }
     });
   }
 
-  // --- Spreadsheet Ribbon and Grid Events ---
+  // --- Grid mouse handling ---
+  function beginDrag(state_, onMove, onEnd) {
+    dragState = state_;
+    const move = (e) => {
+      const bounds = el.gridContainer.getBoundingClientRect();
+      if (e.clientY > bounds.bottom - 16) el.gridContainer.scrollTop += ROW_HEIGHT;
+      else if (e.clientY < bounds.top + HEADER_HEIGHT + 8) el.gridContainer.scrollTop -= ROW_HEIGHT;
+      if (e.clientX > bounds.right - 16) el.gridContainer.scrollLeft += DEFAULT_COL_WIDTH / 2;
+      else if (e.clientX < bounds.left + ROW_HEADER_WIDTH + 8) el.gridContainer.scrollLeft -= DEFAULT_COL_WIDTH / 2;
+      renderVisibleRows();
+      onMove(e);
+    };
+    const up = (e) => {
+      document.removeEventListener('mousemove', move);
+      document.removeEventListener('mouseup', up);
+      const finished = dragState;
+      dragState = null;
+      if (onEnd) onEnd(e, finished);
+    };
+    document.addEventListener('mousemove', move);
+    document.addEventListener('mouseup', up);
+  }
+
+  function startColResize(e, c) {
+    e.preventDefault();
+    const sheet = getActiveSheetData();
+    const startX = e.clientX;
+    const startWidth = colWidth(sheet, c);
+    let width = startWidth;
+    const col = el.spreadsheetGrid.querySelector(`col[data-col="${c}"]`);
+    const tableWidth = parseFloat(el.spreadsheetGrid.style.width);
+
+    beginDrag({ type: 'resize' }, (move) => {
+      width = Math.max(MIN_COL_WIDTH, startWidth + move.clientX - startX);
+      col.style.width = `${width}px`;
+      el.spreadsheetGrid.style.width = `${tableWidth + width - startWidth}px`;
+    }, () => {
+      if (width === startWidth) return;
+      mutate((current) => {
+        current.colWidths[c] = width;
+      }, { keepClipboard: true });
+    });
+  }
+
+  function startFillDrag(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    commitPendingEdit();
+    const source = getRange();
+
+    beginDrag({ type: 'fill', target: null }, (move) => {
+      const { r, c } = cellAtPoint(move.clientX, move.clientY);
+      const below = r - source.r2;
+      const above = source.r1 - r;
+      const right = c - source.c2;
+      const left = source.c1 - c;
+      const furthest = Math.max(below, above, right, left);
+      let target = null;
+      if (furthest > 0) {
+        if (furthest === below) target = { ...source, r2: r };
+        else if (furthest === above) target = { ...source, r1: r };
+        else if (furthest === right) target = { ...source, c2: c };
+        else target = { ...source, c1: c };
+      }
+      dragState.target = target;
+      paintCopyBox();
+    }, (up, finished) => {
+      paintCopyBox();
+      if (finished.target) applyFill(source, finished.target);
+    });
+  }
+
+  function onGridMouseDown(e) {
+    if (e.target.closest('.cell-editor')) return;
+    closeGridMenu();
+    const sheet = getActiveSheetData();
+
+    const resize = e.target.closest('.col-resize');
+    if (resize) {
+      commitPendingEdit();
+      startColResize(e, Number(resize.parentElement.dataset.col));
+      return;
+    }
+    if (e.target.closest('.fill-handle')) {
+      startFillDrag(e);
+      return;
+    }
+
+    const td = e.target.closest('td.grid-cell');
+    const colHeader = e.target.closest('.col-header');
+    const rowHeader = e.target.closest('.row-header');
+    const corner = e.target.closest('.grid-corner');
+    if (!td && !colHeader && !rowHeader && !corner) return;
+
+    // Right clicking inside the selection keeps it, so the menu acts on all of it.
+    if (e.button === 2) {
+      commitPendingEdit();
+      const range = getRange();
+      if (td) {
+        const r = Number(td.dataset.row);
+        const c = Number(td.dataset.col);
+        if (r < range.r1 || r > range.r2 || c < range.c1 || c > range.c2) selectCell(r, c, { scroll: false });
+      } else if (colHeader) {
+        const c = Number(colHeader.dataset.col);
+        if (c < range.c1 || c > range.c2) selectRange(0, c, sheet.rowCount - 1, c);
+      } else if (rowHeader) {
+        const r = Number(rowHeader.dataset.row);
+        if (r < range.r1 || r > range.r2) selectRange(r, 0, r, sheet.colCount - 1);
+      }
+      return;
+    }
+    if (e.button !== 0) return;
+
+    if (td) {
+      const input = activeEditInput();
+      if (input && canPickReference(input)) {
+        e.preventDefault();
+        const cell = { r: Number(td.dataset.row), c: Number(td.dataset.col) };
+        const continuing = refPick && refPick.input === input;
+        refPick = {
+          input,
+          start: continuing ? refPick.start : input.selectionStart,
+          textEnd: continuing ? refPick.textEnd : input.selectionStart,
+          end: continuing ? refPick.end : undefined,
+          anchor: cell
+        };
+        if (refPick.end === undefined) refPick.end = null;
+        writePickedReference(cell);
+        beginDrag({ type: 'pick' }, (move) => writePickedReference(cellAtPoint(move.clientX, move.clientY)));
+        return;
+      }
+    }
+
+    const r = td ? Number(td.dataset.row) : rowHeader ? Number(rowHeader.dataset.row) : 0;
+    const c = td ? Number(td.dataset.col) : colHeader ? Number(colHeader.dataset.col) : 0;
+
+    commitPendingEdit();
+    if (document.activeElement && document.activeElement.matches('input, select, button')) document.activeElement.blur();
+    e.preventDefault();
+
+    const lastRow = sheet.rowCount - 1;
+    const lastCol = sheet.colCount - 1;
+
+    if (corner) {
+      selectRange(0, 0, lastRow, lastCol);
+    } else if (colHeader) {
+      const anchor = e.shiftKey ? state.sheet.selectedCell.c : c;
+      selectRange(0, anchor, lastRow, c);
+      beginDrag({ type: 'cols' }, (move) => selectRange(0, anchor, lastRow, cellAtPoint(move.clientX, move.clientY).c));
+    } else if (rowHeader) {
+      const anchor = e.shiftKey ? state.sheet.selectedCell.r : r;
+      selectRange(anchor, 0, r, lastCol);
+      beginDrag({ type: 'rows' }, (move) => selectRange(anchor, 0, cellAtPoint(move.clientX, move.clientY).r, lastCol));
+    } else {
+      selectCell(r, c, { extend: e.shiftKey, scroll: false });
+      beginDrag({ type: 'cells' }, (move) => {
+        const end = cellAtPoint(move.clientX, move.clientY);
+        const a = state.sheet.selectedCell;
+        const current = state.sheet.rangeEnd;
+        if (!current || current.r !== end.r || current.c !== end.c) selectRange(a.r, a.c, end.r, end.c);
+      });
+    }
+  }
+
+  // --- Right click menu ---
+  function closeGridMenu() {
+    document.getElementById('gridMenu').hidden = true;
+  }
+
+  function openGridMenu(x, y) {
+    const menu = document.getElementById('gridMenu');
+    const range = getRange();
+    const mergeItem = menu.querySelector('[data-action="merge"]');
+    const hasMerge = mergesInside(getActiveSheetData(), range).length > 0;
+    mergeItem.textContent = hasMerge ? 'Unmerge cells' : 'Merge cells';
+    mergeItem.disabled = !hasMerge && range.r1 === range.r2 && range.c1 === range.c2;
+    menu.hidden = false;
+    menu.style.left = `${Math.min(x, window.innerWidth - menu.offsetWidth - 8)}px`;
+    menu.style.top = `${Math.min(y, window.innerHeight - menu.offsetHeight - 8)}px`;
+  }
+
+  function initGridMenu() {
+    const actions = {
+      insertRowAbove: () => insertRows('above'),
+      insertRowBelow: () => insertRows('below'),
+      deleteRow: deleteRows,
+      insertColLeft: () => insertCols('left'),
+      insertColRight: () => insertCols('right'),
+      deleteCol: deleteCols,
+      merge: toggleMerge,
+      clear: clearSelection
+    };
+    const menu = document.getElementById('gridMenu');
+    menu.addEventListener('mousedown', (e) => e.preventDefault());
+    menu.addEventListener('click', (e) => {
+      const item = e.target.closest('[data-action]');
+      if (!item) return;
+      closeGridMenu();
+      actions[item.dataset.action]();
+    });
+    el.gridContainer.addEventListener('contextmenu', (e) => {
+      if (e.target.closest('.cell-editor')) return;
+      e.preventDefault();
+      openGridMenu(e.clientX, e.clientY);
+    });
+    document.addEventListener('mousedown', (e) => {
+      if (!e.target.closest('#gridMenu') && !e.target.closest('#gridContainer')) closeGridMenu();
+    });
+  }
+
+  // --- Keyboard ---
+  function jumpTarget(r, c, dr, dc) {
+    const sheet = getActiveSheetData();
+    const filled = (row, col) => rawInput(sheet.cells[coordToAddress(row, col)]) !== '';
+    const inBounds = (row, col) => row >= 0 && col >= 0 && row < sheet.rowCount && col < sheet.colCount;
+
+    let row = r + dr;
+    let col = c + dc;
+    if (!inBounds(row, col)) return { r, c };
+
+    if (filled(r, c) && filled(row, col)) {
+      while (inBounds(row + dr, col + dc) && filled(row + dr, col + dc)) {
+        row += dr;
+        col += dc;
+      }
+      return { r: row, c: col };
+    }
+    while (inBounds(row, col) && !filled(row, col)) {
+      row += dr;
+      col += dc;
+    }
+    if (inBounds(row, col)) return { r: row, c: col };
+    return { r: dr ? (dr > 0 ? sheet.rowCount - 1 : 0) : r, c: dc ? (dc > 0 ? sheet.colCount - 1 : 0) : c };
+  }
+
+  function onGridKeyDown(e) {
+    if (state.mode !== 'sheet' || cellEditor || e.isComposing) return;
+    if (e.target.closest && e.target.closest('input, select, button, [role="tab"], .modal-overlay')) return;
+    if (document.querySelector('.modal-overlay.active')) return;
+
+    const sheet = getActiveSheetData();
+    const a = state.sheet.selectedCell;
+    const end = state.sheet.rangeEnd || a;
+    const command = e.metaKey || e.ctrlKey;
+    const key = e.key.toLowerCase();
+
+    if (command) {
+      if (key === 'z') {
+        e.preventDefault();
+        if (e.shiftKey) redoSheet();
+        else undoSheet();
+      } else if (key === 'y') {
+        e.preventDefault();
+        redoSheet();
+      } else if (key === 'a') {
+        e.preventDefault();
+        selectRange(0, 0, sheet.rowCount - 1, sheet.colCount - 1);
+      }
+    }
+
+    const arrows = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    if (arrows[e.key]) {
+      e.preventDefault();
+      const [dr, dc] = arrows[e.key];
+      const from = e.shiftKey ? end : a;
+      const to = command ? jumpTarget(from.r, from.c, dr, dc) : stepFrom(from.r, from.c, dr, dc);
+      selectCell(to.r, to.c, { extend: e.shiftKey });
+      return;
+    }
+
+    const page = Math.max(1, Math.floor(el.gridContainer.clientHeight / ROW_HEIGHT) - 2);
+    switch (e.key) {
+      case 'Tab': {
+        e.preventDefault();
+        const to = stepFrom(a.r, a.c, 0, e.shiftKey ? -1 : 1);
+        selectCell(to.r, to.c);
+        break;
+      }
+      case 'Enter': {
+        e.preventDefault();
+        const to = stepFrom(a.r, a.c, e.shiftKey ? -1 : 1, 0);
+        selectCell(to.r, to.c);
+        break;
+      }
+      case 'Home':
+        e.preventDefault();
+        selectCell(command ? 0 : a.r, 0, { extend: e.shiftKey });
+        break;
+      case 'PageDown':
+        e.preventDefault();
+        selectCell(a.r + page, a.c, { extend: e.shiftKey });
+        break;
+      case 'PageUp':
+        e.preventDefault();
+        selectCell(a.r - page, a.c, { extend: e.shiftKey });
+        break;
+      case 'F2':
+        e.preventDefault();
+        startCellEdit();
+        break;
+      case 'Escape':
+        if (gridClipboard) {
+          gridClipboard = null;
+          paintCopyBox();
+        }
+        break;
+      case 'Delete':
+      case 'Backspace':
+        e.preventDefault();
+        clearSelection();
+        break;
+      default:
+        if (e.key.length === 1 && !command && !e.altKey) {
+          // Otherwise the browser also types this key into the editor that just took focus.
+          e.preventDefault();
+          selectCell(a.r, a.c);
+          startCellEdit(e.key);
+        }
+    }
+  }
+
+  // --- Spreadsheet ribbon and grid events ---
   function initSheetEvents() {
-    // Add Sheet button
     el.btnAddSheet.onclick = () => addSheet();
 
     // Delegated, because selecting another tab rebuilds the tab elements mid double click.
@@ -1335,271 +2232,122 @@
       }
     });
 
-    // Formula Input change
+    // Formula bar
+    const beginFormulaEdit = () => {
+      if (formulaEdit || cellEditor) return;
+      const { r, c } = state.sheet.selectedCell;
+      formulaEdit = { r, c, original: rawInput(getActiveSheetData().cells[coordToAddress(r, c)]) };
+    };
+    el.formulaInput.addEventListener('focus', beginFormulaEdit);
+    el.formulaInput.addEventListener('input', () => {
+      beginFormulaEdit();
+      refPick = null;
+      paintCopyBox();
+    });
+    el.formulaInput.addEventListener('blur', () => {
+      if (document.hasFocus()) commitFormulaBar();
+    });
     el.formulaInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        const { r, c } = state.sheet.selectedCell;
-        setCellVal(r, c, el.formulaInput.value);
-        selectCell(Math.min(r + 1, getActiveSheetData().rowCount - 1), c);
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault();
+        const { r, c } = formulaEdit || state.sheet.selectedCell;
+        commitFormulaBar();
+        el.formulaInput.blur();
+        if (e.key === 'Enter') selectCell(r + (e.shiftKey ? -1 : 1), c);
+        else selectCell(r, c + (e.shiftKey ? -1 : 1));
+      } else if (e.key === 'Escape' && formulaEdit) {
+        e.preventDefault();
+        el.formulaInput.value = formulaEdit.original;
+        formulaEdit = null;
+        clearRefPick();
+        el.formulaInput.blur();
       }
     });
 
-    // Grid Cell Click & Double Click
-    el.spreadsheetGrid.addEventListener('click', (e) => {
-      const td = e.target.closest('td.grid-cell');
-      if (td) {
-        const r = parseInt(td.getAttribute('data-row'), 10);
-        const c = parseInt(td.getAttribute('data-col'), 10);
-        selectCell(r, c);
+    // Name box: type an address or range to go there
+    el.cellAddress.addEventListener('focus', () => el.cellAddress.select());
+    el.cellAddress.addEventListener('blur', () => paintSelection());
+    el.cellAddress.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        el.cellAddress.blur();
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        const parts = el.cellAddress.value.trim().split(':').map((part) => addressToCoord(part.replace(/\$/g, '')));
+        if (parts.length <= 2 && parts.every(Boolean)) {
+          const sheet = getActiveSheetData();
+          const fit = (coord) => ({
+            r: Math.min(coord.r, sheet.rowCount - 1),
+            c: Math.min(coord.c, sheet.colCount - 1)
+          });
+          const a = fit(parts[0]);
+          const b = fit(parts[1] || parts[0]);
+          selectRange(a.r, a.c, b.r, b.c);
+          scrollCellIntoView(b.r, b.c);
+          scrollCellIntoView(a.r, a.c);
+        } else {
+          showToast('Enter a cell or range, such as B20 or A1:C5', 'error');
+        }
+        el.cellAddress.blur();
       }
     });
 
-    el.spreadsheetGrid.addEventListener('dblclick', (e) => {
-      const td = e.target.closest('td.grid-cell');
-      if (td) {
-        startCellEdit(td);
+    // Grid
+    el.gridContainer.addEventListener('mousedown', onGridMouseDown);
+    el.gridContainer.addEventListener('dblclick', (e) => {
+      if (e.target.closest('.cell-editor')) return;
+      const resize = e.target.closest('.col-resize');
+      if (resize) {
+        const c = Number(resize.parentElement.dataset.col);
+        mutate((sheet) => {
+          sheet.colWidths[c] = fittedColWidth(sheet, c);
+        }, { keepClipboard: true });
+        return;
       }
+      if (e.target.closest('td.grid-cell')) startCellEdit();
     });
 
-    // Keyboard navigation in grid
+    el.gridContainer.addEventListener('scroll', () => {
+      closeGridMenu();
+      renderVisibleRows();
+    });
+    window.addEventListener('resize', () => renderVisibleRows());
+
     document.addEventListener('keydown', (e) => {
-      if (state.mode !== 'sheet') return;
-      if (state.sheet.editingCell) return;
-      if (e.target.closest && e.target.closest('input, select, button, [role="tab"], .modal-overlay')) return;
-      if (document.querySelector('.modal-overlay.active')) return;
-
-      const { r, c } = state.sheet.selectedCell;
-      const sheetData = getActiveSheetData();
-
-      switch (e.key) {
-        case 'ArrowUp':
-          if (r > 0) selectCell(r - 1, c);
-          e.preventDefault();
-          break;
-        case 'ArrowDown':
-          if (r < sheetData.rowCount - 1) selectCell(r + 1, c);
-          e.preventDefault();
-          break;
-        case 'ArrowLeft':
-          if (c > 0) selectCell(r, c - 1);
-          e.preventDefault();
-          break;
-        case 'ArrowRight':
-          if (c < sheetData.colCount - 1) selectCell(r, c + 1);
-          e.preventDefault();
-          break;
-        case 'Tab':
-          e.preventDefault();
-          if (e.shiftKey) {
-            if (c > 0) selectCell(r, c - 1);
-          } else {
-            if (c < sheetData.colCount - 1) selectCell(r, c + 1);
-          }
-          break;
-        case 'Enter':
-          e.preventDefault();
-          if (e.shiftKey) {
-            if (r > 0) selectCell(r - 1, c);
-          } else {
-            if (r < sheetData.rowCount - 1) selectCell(r + 1, c);
-          }
-          break;
-        case 'Delete':
-        case 'Backspace':
-          setCellVal(r, c, '');
-          e.preventDefault();
-          break;
-        default:
-          if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            const td = el.spreadsheetGrid.querySelector(`td[data-row="${r}"][data-col="${c}"]`);
-            if (td) {
-              // Otherwise the browser also types this key into the editor that just took focus.
-              e.preventDefault();
-              startCellEdit(td, e.key);
-            }
-          }
-          break;
-      }
+      if (e.key === 'Escape') closeGridMenu();
+      onGridKeyDown(e);
     });
 
-    // Cell Formatting buttons
-    document.getElementById('sheetBold').onclick = () => toggleCellFormat('bold');
-    document.getElementById('sheetItalic').onclick = () => toggleCellFormat('italic');
+    initGridMenu();
 
-    document.getElementById('sheetTextColor').oninput = (e) => {
-      setCellFormatProperty('color', e.target.value);
+    // Toolbar
+    document.getElementById('sheetUndo').onclick = undoSheet;
+    document.getElementById('sheetRedo').onclick = redoSheet;
+
+    const toolbarAction = (id, action) => {
+      document.getElementById(id).onclick = () => {
+        commitPendingEdit();
+        action();
+      };
     };
+    toolbarAction('sheetBold', () => toggleCellFormat('bold'));
+    toolbarAction('sheetItalic', () => toggleCellFormat('italic'));
+    toolbarAction('sheetAlignLeft', () => setCellFormatProperty('align', 'left'));
+    toolbarAction('sheetAlignCenter', () => setCellFormatProperty('align', 'center'));
+    toolbarAction('sheetAlignRight', () => setCellFormatProperty('align', 'right'));
+    toolbarAction('sheetInsertRowAbove', () => insertRows('above'));
+    toolbarAction('sheetInsertRowBelow', () => insertRows('below'));
+    toolbarAction('sheetDeleteRow', deleteRows);
+    toolbarAction('sheetInsertColLeft', () => insertCols('left'));
+    toolbarAction('sheetInsertColRight', () => insertCols('right'));
+    toolbarAction('sheetDeleteCol', deleteCols);
+    document.getElementById('sheetAutoSum').onclick = runAutoSum;
+    document.getElementById('sheetMerge').onclick = toggleMerge;
 
-    document.getElementById('sheetFillColor').oninput = (e) => {
-      setCellFormatProperty('bg', e.target.value);
-    };
-
-    document.getElementById('sheetAlignLeft').onclick = () => setCellFormatProperty('align', 'left');
-    document.getElementById('sheetAlignCenter').onclick = () => setCellFormatProperty('align', 'center');
-    document.getElementById('sheetAlignRight').onclick = () => setCellFormatProperty('align', 'right');
-
+    document.getElementById('sheetTextColor').onchange = (e) => setCellFormatProperty('color', e.target.value);
+    document.getElementById('sheetFillColor').onchange = (e) => setCellFormatProperty('bg', e.target.value);
     document.getElementById('sheetNumberFormat').onchange = (e) => {
-      setCellFormatProperty('format', e.target.value);
+      setCellFormatProperty('format', e.target.value === 'general' ? '' : e.target.value);
     };
-
-    // Row & Column Operations
-    document.getElementById('sheetInsertRowAbove').onclick = () => insertRow(state.sheet.selectedCell.r);
-    document.getElementById('sheetInsertRowBelow').onclick = () => insertRow(state.sheet.selectedCell.r + 1);
-    document.getElementById('sheetDeleteRow').onclick = () => deleteRow(state.sheet.selectedCell.r);
-    document.getElementById('sheetInsertColLeft').onclick = () => insertCol(state.sheet.selectedCell.c);
-    document.getElementById('sheetInsertColRight').onclick = () => insertCol(state.sheet.selectedCell.c + 1);
-    document.getElementById('sheetDeleteCol').onclick = () => deleteCol(state.sheet.selectedCell.c);
-
-    // AutoSum shortcut
-    document.getElementById('sheetAutoSum').onclick = () => {
-      const { r, c } = state.sheet.selectedCell;
-      if (r > 0) {
-        const topAddr = coordToAddress(0, c);
-        const aboveAddr = coordToAddress(r - 1, c);
-        setCellVal(r, c, `=SUM(${topAddr}:${aboveAddr})`);
-      }
-    };
-  }
-
-  function startCellEdit(td, initialChar = null) {
-    state.sheet.editingCell = td;
-    const r = parseInt(td.getAttribute('data-row'), 10);
-    const c = parseInt(td.getAttribute('data-col'), 10);
-    const addr = coordToAddress(r, c);
-    const sheetData = getActiveSheetData();
-    const cell = sheetData.cells[addr] || {};
-
-    const input = document.createElement('input');
-    input.type = 'text';
-    input.className = 'cell-editor';
-    input.value = initialChar !== null ? initialChar : (cell.f || cell.v || '');
-
-    td.classList.add('editing');
-    td.appendChild(input);
-    input.focus();
-    if (initialChar === null) input.select();
-
-    let finished = false;
-    const finish = (commit) => {
-      // Removing a focused input can fire blur, so this may be re-entered.
-      if (finished) return;
-      finished = true;
-      const newVal = input.value;
-      input.remove();
-      td.classList.remove('editing');
-      state.sheet.editingCell = null;
-      if (commit) setCellVal(r, c, newVal);
-    };
-
-    input.addEventListener('blur', () => finish(true));
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        finish(true);
-        selectCell(Math.min(r + 1, sheetData.rowCount - 1), c);
-      } else if (e.key === 'Escape') {
-        finish(false);
-      }
-    });
-  }
-
-  function toggleCellFormat(prop) {
-    const sheetData = getActiveSheetData();
-    const { r, c } = state.sheet.selectedCell;
-    const addr = coordToAddress(r, c);
-    if (!sheetData.cells[addr]) sheetData.cells[addr] = { s: {} };
-    if (!sheetData.cells[addr].s) sheetData.cells[addr].s = {};
-
-    sheetData.cells[addr].s[prop] = !sheetData.cells[addr].s[prop];
-    markSheetModified();
-    renderGrid();
-  }
-
-  function setCellFormatProperty(prop, value) {
-    const sheetData = getActiveSheetData();
-    const { r, c } = state.sheet.selectedCell;
-    const addr = coordToAddress(r, c);
-    if (!sheetData.cells[addr]) sheetData.cells[addr] = { s: {} };
-    if (!sheetData.cells[addr].s) sheetData.cells[addr].s = {};
-
-    sheetData.cells[addr].s[prop] = value;
-    markSheetModified();
-    renderGrid();
-  }
-
-  function insertRow(atRow) {
-    const sheetData = getActiveSheetData();
-    const newCells = {};
-    for (const [addr, cell] of Object.entries(sheetData.cells)) {
-      const coord = addressToCoord(addr);
-      if (coord.r >= atRow) {
-        newCells[coordToAddress(coord.r + 1, coord.c)] = cell;
-      } else {
-        newCells[addr] = cell;
-      }
-    }
-    sheetData.cells = newCells;
-    sheetData.rowCount++;
-    markSheetModified();
-    renderGrid();
-    showToast(`Inserted row ${atRow + 1}`);
-  }
-
-  function deleteRow(atRow) {
-    const sheetData = getActiveSheetData();
-    if (sheetData.rowCount <= 1) return;
-    const newCells = {};
-    for (const [addr, cell] of Object.entries(sheetData.cells)) {
-      const coord = addressToCoord(addr);
-      if (coord.r === atRow) continue;
-      if (coord.r > atRow) {
-        newCells[coordToAddress(coord.r - 1, coord.c)] = cell;
-      } else {
-        newCells[addr] = cell;
-      }
-    }
-    sheetData.cells = newCells;
-    sheetData.rowCount--;
-    markSheetModified();
-    renderGrid();
-    showToast(`Deleted row ${atRow + 1}`);
-  }
-
-  function insertCol(atCol) {
-    const sheetData = getActiveSheetData();
-    const newCells = {};
-    for (const [addr, cell] of Object.entries(sheetData.cells)) {
-      const coord = addressToCoord(addr);
-      if (coord.c >= atCol) {
-        newCells[coordToAddress(coord.r, coord.c + 1)] = cell;
-      } else {
-        newCells[addr] = cell;
-      }
-    }
-    sheetData.cells = newCells;
-    sheetData.colCount++;
-    markSheetModified();
-    renderGrid();
-    showToast(`Inserted column ${indexToCol(atCol)}`);
-  }
-
-  function deleteCol(atCol) {
-    const sheetData = getActiveSheetData();
-    if (sheetData.colCount <= 1) return;
-    const newCells = {};
-    for (const [addr, cell] of Object.entries(sheetData.cells)) {
-      const coord = addressToCoord(addr);
-      if (coord.c === atCol) continue;
-      if (coord.c > atCol) {
-        newCells[coordToAddress(coord.r, coord.c - 1)] = cell;
-      } else {
-        newCells[addr] = cell;
-      }
-    }
-    sheetData.cells = newCells;
-    sheetData.colCount--;
-    markSheetModified();
-    renderGrid();
-    showToast(`Deleted column ${indexToCol(atCol)}`);
   }
 
   // --- XLSX IMPORT & EXPORT via SheetJS ---
@@ -1621,8 +2369,10 @@
 
         for (const [cellAddr, cellObj] of Object.entries(ws)) {
           if (cellAddr.startsWith('!')) continue;
+          // Error cells store a numeric code in v and the text, such as #N/A, in w.
+          const isError = cellObj.t === 'e';
           cells[cellAddr] = {
-            v: cellObj.v !== undefined ? cellObj.v : '',
+            v: isError ? cellObj.w : (cellObj.v !== undefined ? cellObj.v : ''),
             f: cellObj.f ? `=${cellObj.f}` : undefined,
             s: (styles[sheetName] && styles[sheetName][cellAddr]) || {}
           };
@@ -1635,14 +2385,29 @@
           if (inRange && !cells[cellAddr]) cells[cellAddr] = { v: '', s: style };
         });
 
+        const colWidths = {};
+        (ws['!cols'] || []).forEach((col, index) => {
+          if (!col) return;
+          const px = col.wpx || (col.wch ? col.wch * 7 + 5 : 0);
+          if (px) colWidths[index] = Math.max(MIN_COL_WIDTH, Math.round(px));
+        });
+
+        const merges = (ws['!merges'] || [])
+          .map((m) => ({ r1: m.s.r, c1: m.s.c, r2: m.e.r, c2: m.e.c }))
+          .filter((m) => m.r2 > m.r1 || m.c2 > m.c1);
+
         state.sheet.sheets[sheetName] = {
           cells: cells,
-          rowCount: Math.max(range.e.r + 10, 40),
-          colCount: Math.max(range.e.c + 5, 20)
+          colWidths: colWidths,
+          merges: merges,
+          rowCount: Math.max(range.e.r + 100, MIN_ROWS),
+          colCount: Math.max(range.e.c + 5, MIN_COLS)
         };
       });
 
       state.sheet.activeSheet = wb.SheetNames[0];
+      resetSheetView();
+      wb.SheetNames.forEach((sheetName) => autoSizeColumns(state.sheet.sheets[sheetName]));
       const title = file.name.replace(/\.[^/.]+$/, '');
       state.sheetTitle = title;
       el.docNameInput.value = title;
@@ -1665,10 +2430,14 @@
     percent: { id: 165, code: '0.0%' },
     decimal: { id: 4 },
     integer: { id: 3 },
-    text: { id: 49 }
+    text: { id: 49 },
+    date: { id: 14 }
   };
 
-  const BUILT_IN_FORMATS = { 2: 'decimal', 3: 'integer', 4: 'decimal', 9: 'percent', 10: 'percent', 49: 'text' };
+  const BUILT_IN_FORMATS = {
+    2: 'decimal', 3: 'integer', 4: 'decimal', 9: 'percent', 10: 'percent', 49: 'text',
+    14: 'date', 15: 'date', 16: 'date', 17: 'date', 22: 'date'
+  };
 
   function toArgb(color) {
     const match = /^#?([0-9a-f]{6})$/i.exec(color || '');
@@ -1756,7 +2525,8 @@
     const code = customCodes[numFmtId] || '';
     // Ignore quoted text, locale tags, and escapes. Date codes must not read as currency: [$-409]d-mmm
     const tokens = code.replace(/"[^"]*"|\[[^\]]*\]|\\./g, '');
-    if (/[dmyhs]/i.test(tokens)) return null;
+    if (/[dy]/i.test(tokens) || (/m/i.test(tokens) && !/[hs]/i.test(tokens))) return 'date';
+    if (/[hs]/i.test(tokens)) return null;
     if (tokens.includes('%')) return 'percent';
     if (code.replace(/\[\$-[^\]]*\]/g, '').includes('$')) return 'currency';
     return null;
@@ -1839,16 +2609,21 @@
   function columnWidths(sheetData, maxCol) {
     const widths = Array.from({ length: maxCol + 1 }, () => ({ wch: 10 }));
     for (const [addr, cell] of Object.entries(sheetData.cells)) {
-      const value = cell.f ? evaluateFormula(cell.f, sheetData) : (cell.v ?? '');
-      const text = String(formatCellValue(value, (cell.s && cell.s.format) || 'general'));
+      const text = String(formatValue(displayValue(sheetData, addr, cell), (cell.s && cell.s.format) || 'general'));
       const column = widths[addressToCoord(addr).c];
       column.wch = Math.max(column.wch, Math.min(text.length + 2, 60));
     }
+    // Columns someone sized by hand keep that size.
+    Object.entries(sheetData.colWidths || {}).forEach(([c, px]) => {
+      if (widths[c]) widths[c].wch = Math.max(1, (px - 5) / 7);
+    });
     return widths;
   }
 
   async function exportXlsx() {
     try {
+      commitPendingEdit();
+      formulas.reset();
       if (!window.XLSX) throw new Error('SheetJS not loaded');
       const wb = window.XLSX.utils.book_new();
 
@@ -1863,18 +2638,27 @@
           if (coord.c > maxC) maxC = coord.c;
 
           const cellObj = {};
+          const excelType = (value) => ({ number: 'n', boolean: 'b' }[typeof value] || 's');
           if (cell.f) {
             cellObj.f = cell.f.replace(/^=/, '');
-            const val = evaluateFormula(cell.f, sheetData);
+            const val = formulas.value(sheetData, addr);
             cellObj.v = val;
-            cellObj.t = typeof val === 'number' ? 'n' : 's';
+            cellObj.t = excelType(val);
           } else {
             cellObj.v = cell.v !== undefined ? cell.v : '';
-            cellObj.t = typeof cell.v === 'number' ? 'n' : 's';
+            cellObj.t = excelType(cellObj.v);
           }
           ws[addr] = cellObj;
         }
 
+        const merges = sheetData.merges || [];
+        merges.forEach((m) => {
+          maxR = Math.max(maxR, m.r2);
+          maxC = Math.max(maxC, m.c2);
+        });
+        if (merges.length) {
+          ws['!merges'] = merges.map((m) => ({ s: { r: m.r1, c: m.c1 }, e: { r: m.r2, c: m.c2 } }));
+        }
         ws['!ref'] = `A1:${coordToAddress(maxR, maxC)}`;
         ws['!cols'] = columnWidths(sheetData, maxC);
         window.XLSX.utils.book_append_sheet(wb, ws, sheetName);
@@ -1933,14 +2717,19 @@
     // New File Button
     el.btnNew.onclick = () => {
       const noun = state.mode === 'doc' ? 'document' : 'spreadsheet';
-      confirmDialog({
-        title: `Create a blank ${noun}?`,
-        message: `This replaces the current ${noun}. Changes you have not saved will be lost.`,
-        confirmLabel: `Create blank ${noun}`
-      }).then((confirmed) => {
+      const modified = state.mode === 'doc' ? state.docModified : state.sheetModified;
+      const ask = modified
+        ? confirmDialog({
+          title: `Create a blank ${noun}?`,
+          message: `This replaces the current ${noun}. Changes you have not saved will be lost.`,
+          confirmLabel: `Create blank ${noun}`
+        })
+        : Promise.resolve(true);
+      ask.then((confirmed) => {
         if (!confirmed) return;
         if (state.mode === 'doc') {
           el.documentPage.innerHTML = '';
+          state.docSection = null;
           state.docTitle = 'Untitled Document';
           el.docNameInput.value = state.docTitle;
           updateDocStats();
@@ -1950,11 +2739,12 @@
             activeSheet: 'Sheet1',
             sheetNames: ['Sheet1'],
             sheets: {
-              'Sheet1': { cells: {}, rowCount: 40, colCount: 20 }
+              'Sheet1': { cells: {}, rowCount: MIN_ROWS, colCount: MIN_COLS, colWidths: {} }
             },
-            selectedCell: { r: 1, c: 0 },
-            editingCell: null
+            selectedCell: { r: 0, c: 0 },
+            rangeEnd: { r: 0, c: 0 }
           };
+          resetSheetView();
           state.sheetTitle = 'Untitled Spreadsheet';
           el.docNameInput.value = state.sheetTitle;
           renderGrid();
@@ -2037,19 +2827,63 @@
     });
   }
 
+  const DOC_EXTENSIONS = ['docx', 'doc', 'html', 'htm', 'txt'];
+  const SHEET_EXTENSIONS = ['xlsx', 'xls', 'csv'];
+
+  // Opened HTML can come from anywhere, so scripts, frames, and event handlers are removed.
+  function cleanImportedHtml(html) {
+    const parsed = new DOMParser().parseFromString(html, 'text/html');
+    parsed.querySelectorAll('script, iframe, frame, frameset, object, embed, link, meta, base, form, noscript, template')
+      .forEach((node) => node.remove());
+    parsed.body.querySelectorAll('*').forEach((node) => {
+      for (const attr of [...node.attributes]) {
+        const name = attr.name.toLowerCase();
+        const value = attr.value.replace(/[\u0000-\u0020]/g, '').toLowerCase();
+        const unsafeUrl = ['href', 'src', 'xlink:href', 'action', 'formaction'].includes(name) &&
+          (value.startsWith('javascript:') || value.startsWith('vbscript:') ||
+            (value.startsWith('data:') && !value.startsWith('data:image/')));
+        if (name.startsWith('on') || name === 'srcdoc' || unsafeUrl) node.removeAttribute(attr.name);
+      }
+    });
+    return parsed.body.innerHTML;
+  }
+
+  /** Opens a file, first asking before it replaces work that has not been saved. */
   function handleIncomingFile(file) {
     const ext = file.name.split('.').pop().toLowerCase();
+    const isDoc = DOC_EXTENSIONS.includes(ext);
+    if (!isDoc && !SHEET_EXTENSIONS.includes(ext)) {
+      showToast(`OfficeLite cannot open .${ext} files. Try a .docx, .xlsx, or .csv file.`, 'error');
+      return;
+    }
+    const modified = isDoc ? state.docModified : state.sheetModified;
+    if (!modified) {
+      openIncomingFile(file, ext);
+      return;
+    }
+    const noun = isDoc ? 'document' : 'spreadsheet';
+    confirmDialog({
+      title: `Open ${file.name}?`,
+      message: `This replaces your current ${noun}. Changes you have not saved will be lost.`,
+      confirmLabel: 'Open file'
+    }).then((confirmed) => {
+      if (confirmed) openIncomingFile(file, ext);
+    });
+  }
+
+  function openIncomingFile(file, ext) {
     if (ext === 'docx' || ext === 'doc') {
       switchMode('doc');
       loadDocxFile(file);
     } else if (ext === 'xlsx' || ext === 'xls' || ext === 'csv') {
       switchMode('sheet');
       loadSpreadsheetFile(file);
-    } else if (ext === 'html' || ext === 'txt') {
+    } else if (ext === 'html' || ext === 'htm' || ext === 'txt') {
       const reader = new FileReader();
       reader.onload = (re) => {
         switchMode('doc');
-        if (ext === 'html') el.documentPage.innerHTML = re.target.result;
+        state.docSection = null;
+        if (ext !== 'txt') el.documentPage.innerHTML = cleanImportedHtml(re.target.result);
         else el.documentPage.innerText = re.target.result;
         state.docTitle = file.name.replace(/\.[^/.]+$/, '');
         el.docNameInput.value = state.docTitle;
@@ -2058,15 +2892,45 @@
         showToast(`Opened ${file.name}`, 'success');
       };
       reader.readAsText(file);
-    } else {
-      showToast(`OfficeLite cannot open .${ext} files. Try a .docx, .xlsx, or .csv file.`, 'error');
     }
+  }
+
+  // --- Native app: File menu commands and files opened from Finder ---
+  function initNativeBridge() {
+    if (!IS_NATIVE_APP) return;
+
+    window.officeLiteCommand = (command) => {
+      if (document.querySelector('.modal-overlay.active')) return;
+      const button = { new: el.btnNew, open: el.btnOpenFile, save: el.btnSaveMain, print: el.btnPrint }[command];
+      if (button) button.click();
+    };
+
+    window.officeLiteOpenFile = async (id, name) => {
+      try {
+        const response = await fetch(`/api/opened-file?id=${encodeURIComponent(id)}`);
+        if (!response.ok) {
+          const detail = await response.json().catch(() => ({}));
+          throw new Error(detail.error || `status ${response.status}`);
+        }
+        const blob = await response.blob();
+        // A dialog may be open, such as the one that asks before replacing work.
+        if (document.querySelector('.modal-overlay.active')) {
+          document.querySelectorAll('.modal-overlay.active').forEach((modal) => closeModal(modal));
+        }
+        handleIncomingFile(new File([blob], name));
+      } catch (err) {
+        showToast(`Could not open ${name}: ${err.message}`, 'error');
+      }
+    };
+
+    if (window.ipc) window.ipc.postMessage(JSON.stringify({ cmd: 'ready' }));
   }
 
   // --- Sample Document & Spreadsheet Loaders ---
   function loadSampleDocument() {
     switchMode('doc');
     state.docTitle = 'Sample Project Proposal';
+    state.docSection = null;
     el.docNameInput.value = state.docTitle;
 
     el.documentPage.innerHTML = `
@@ -2209,6 +3073,8 @@
       }
     };
     state.sheet.activeSheet = 'Annual Budget';
+    resetSheetView();
+    state.sheet.sheetNames.forEach((name) => autoSizeColumns(state.sheet.sheets[name]));
     renderGrid();
     markSaved();
     showToast('Opened sample budget', 'success');
@@ -2223,7 +3089,10 @@
           docTitle: state.docTitle,
           sheetTitle: state.sheetTitle,
           docHtml: el.documentPage.innerHTML,
-          sheet: state.sheet
+          docSection: state.docSection,
+          sheet: state.sheet,
+          docModified: state.docModified,
+          sheetModified: state.sheetModified
         };
         localStorage.setItem('officelite_autosave', JSON.stringify(payload));
       } catch (e) {
@@ -2231,7 +3100,8 @@
       }
     }, 4000);
 
-    // Check if previous session exists
+    // Check if previous session exists. Returns which restored files still have unsaved changes.
+    const restored = { doc: false, sheet: false };
     try {
       const saved = localStorage.getItem('officelite_autosave');
       if (saved) {
@@ -2239,11 +3109,16 @@
         if (data.docHtml && data.docHtml.length > 50) {
           el.documentPage.innerHTML = data.docHtml;
           state.docTitle = data.docTitle || 'Untitled Document';
+          state.docSection = data.docSection || null;
           el.docNameInput.value = state.docTitle;
           updateDocStats();
+          restored.doc = !!data.docModified;
         }
         if (data.sheet && data.sheet.sheetNames) {
+          restored.sheet = !!data.sheetModified;
           state.sheet = data.sheet;
+          delete state.sheet.editingCell;
+          if (!state.sheet.rangeEnd) state.sheet.rangeEnd = { ...state.sheet.selectedCell };
           state.sheetTitle = data.sheetTitle || 'Untitled Spreadsheet';
         }
       } else {
@@ -2253,6 +3128,7 @@
     } catch (e) {
       loadSampleDocument();
     }
+    return restored;
   }
 
   // --- App Initialization ---
@@ -2264,12 +3140,12 @@
     initDocToolbar();
     initSheetEvents();
     initModeSwitcher();
-    checkServerStatus();
-    initAutoSave();
+    const restored = initAutoSave();
     updateDocStats();
-    state.docModified = false;
-    state.sheetModified = false;
+    state.docModified = restored.doc;
+    state.sheetModified = restored.sheet;
     updateSaveStatus();
+    initNativeBridge();
   }
 
   // Start app when DOM is ready

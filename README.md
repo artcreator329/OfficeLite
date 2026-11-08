@@ -1,6 +1,6 @@
 # OfficeLite 🦀📄📊
 ### Native Rust Desktop Word (.docx) & Excel (.xlsx) Viewer & Editor
-**Zero Localhost &bull; Zero Network Ports &bull; 100% Native macOS ARM64 &bull; 3.1 MB Binary**
+**Zero Localhost &bull; Zero Network Ports &bull; 100% Native macOS &bull; 3.2 MB Binary**
 
 **OfficeLite** is a blazingly fast, standalone desktop app built in **Rust** (powered by Tao + Wry / macOS WebKit) so you never need to pay for a Microsoft 365 / MS Office subscription.
 
@@ -15,7 +15,7 @@
 | Metric | 🐌 Electron App | 🌐 Python Localhost | 🦀 **OfficeLite (Rust)** |
 | :--- | :--- | :--- | :--- |
 | **Localhost Server** | Often required | Required (`:8765`) | **None (Zero Ports)** |
-| **Binary Size** | ~200 MB+ | ~50 MB+ runtime | **3.1 MB (Total)** |
+| **Binary Size** | ~200 MB+ | ~50 MB+ runtime | **3.2 MB (Total)** |
 | **RAM Usage** | ~300 MB - 600 MB | ~80 MB | **~35 MB** |
 | **Startup Time** | 2.5 - 4.0 seconds | 1.5 seconds | **< 0.2 seconds** |
 | **Engine** | Bundled Chromium | External Browser | **Native Apple WebKit** |
@@ -23,34 +23,16 @@
 
 ---
 
-## ⬇️ Download
-
-Needs a Mac with Apple Silicon (M1 or later) running macOS 11 or newer.
-
-1. Download the `.zip` from the [latest release](https://github.com/artcreator329/OfficeLite/releases/latest).
-2. Unzip it and drag `OfficeLite.app` into `/Applications`.
-3. Open it. The first time, macOS blocks it because the app is not signed with an Apple Developer ID. Go to **System Settings > Privacy & Security**, scroll down, and click **Open Anyway**.
-
-If macOS says the app is damaged or offers no Open Anyway button, run this once in Terminal, then open the app again:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/OfficeLite.app
-```
-
-That command removes the download warning for this app, so only run it if you trust where you got the file.
-
----
-
 ## 🚀 Build From Source
 
-You need a Mac with the [Rust toolchain](https://rustup.rs) installed.
+There is no ready-made download yet, so build the app yourself. You need a Mac running macOS 11 or newer, with the [Rust toolchain](https://rustup.rs) installed.
 
 ```bash
 git clone https://github.com/artcreator329/OfficeLite.git
 cd OfficeLite
 ```
 
-Build a double clickable app at `target/release/OfficeLite.app`, which you can drag into `/Applications`:
+Build a double clickable app at `target/release/OfficeLite.app`, which you can drag into `/Applications`. Once it is there, Finder lists OfficeLite under **Open With** for `.docx`, `.xlsx`, `.xls`, `.csv`, `.txt`, and `.html` files:
 
 ```bash
 ./scripts/make-app.sh
@@ -62,14 +44,12 @@ Or run it directly:
 cargo run --release
 ```
 
-[Pandoc](https://pandoc.org) is optional. If it is installed, OfficeLite uses it for higher fidelity `.docx` conversion. Otherwise it uses its built in converter.
-
 ---
 
 ## ✨ Features
 
 ### 📄 Word Document Editor (.docx, .doc, .html, .txt)
-- **View & Edit .docx Files**: Drag and drop any Word document directly into the app window.
+- **View & Edit .docx Files**: Open a Word document from Finder, the File menu, or by dragging it into the window.
 - **Rich Typography & Formatting**: Headings (H1, H2, H3), Paragraphs, Quotes, Code blocks.
 - **Font & Size Selection**: Calibri, Arial, Times New Roman, Georgia, SF Pro, Geist, etc.
 - **Styling**: Bold, Italic, Underline, Strikethrough, Text Color, Highlight Color.
@@ -80,23 +60,29 @@ cargo run --release
   - **Hyperlinks** and dividers.
 - **Document Stats**: Live word count, character count, and estimated reading time.
 - **Exporting**:
-  - **Save as .docx** (Cmd+S): Choose the location in the native macOS Save panel. Uses Pandoc when it is installed, otherwise the built in converter.
+  - **Save as .docx** (Cmd+S): Choose the location in the native macOS Save panel. Keeps text color, highlight, fonts, sizes, alignment, lists, tables, images, and links.
   - **PDF / Print** (Cmd+P): The native macOS print panel, including Save as PDF.
 
 ### 📊 Excel Spreadsheet Editor (.xlsx, .xls, .csv)
-- **View & Edit .xlsx Workbooks**: Open multi-sheet Excel files or CSVs with drag and drop.
+- **View & Edit .xlsx Workbooks**: Open multi-sheet Excel files or CSVs from Finder, the File menu, or by dragging them into the window.
 - **Formula Engine**:
-  - `=SUM(A1:A10)`
-  - `=AVERAGE(B2:B20)`
-  - `=COUNT(C1:C15)`
-  - Arithmetic: `=A1 * 1.08`, `=(B2 - C2) / 2`
-  - Real-time recalculation across cells.
-- **Cell Formatting**: Bold, Italic, Text Color, Background Fill, Text Alignment.
-- **Number Formats**: Currency (`$1,234.50`), Percentage (`12.5%`), Decimals, Integers, and Plain Text.
-- **Grid Manipulation**: Insert row above/below, delete row, insert column left/right, delete column.
+  - Math and stats: `SUM`, `AVERAGE`, `COUNT`, `COUNTA`, `MIN`, `MAX`, `MEDIAN`, `ROUND`, `MOD`, and more.
+  - Logic and lookup: `IF`, `IFERROR`, `AND`, `OR`, `SUMIF`, `COUNTIF`, `VLOOKUP`, `INDEX`, `MATCH`.
+  - Text and dates: `CONCAT`, `LEFT`, `RIGHT`, `MID`, `TRIM`, `DATE`, `TODAY`.
+  - Arithmetic, `$` absolute references, and references to other sheets: `=A1 * 1.08`, `=SUM($B$2:$B$9)`, `=Budget!F6`.
+  - Click a cell while typing a formula to insert its address.
+  - Functions it does not know keep the value Excel saved in the file.
+- **Editing**: Drag or Shift+arrow to select ranges, then see their sum and average in the status bar. Undo, fill handle, right click menu, and resizable columns.
+- **Cell Formatting**: Bold, Italic, Text Color, Background Fill, Text Alignment, and Merged Cells.
+- **Number Formats**: Currency (`$1,234.50`), Percentage (`12.5%`), Decimals, Integers, Dates, and Plain Text.
+- **Grid Manipulation**: Insert and delete rows and columns. Formulas update to match.
 - **Multi-Sheet Management**: Switch sheets, add new sheets (`+`), double-click to rename, or delete sheets.
 - **Clipboard**: Cut, copy, and paste cells. Tab separated rows from Excel, Numbers, or a web table fill the grid.
-- **Exporting**: Save as `.xlsx` (Cmd+S) through the native macOS Save panel. Bold, italic, colors, fills, alignment, and number formats are kept.
+- **Exporting**: Save as `.xlsx` (Cmd+S) through the native macOS Save panel. Bold, italic, colors, fills, alignment, number formats, and merged cells are kept.
+
+### 🍎 Mac Menus and Shortcuts
+- **File menu**: New (Cmd+N), Open (Cmd+O), Save (Cmd+S), and Print (Cmd+P).
+- OfficeLite asks before replacing a file that has unsaved changes, including after the app restarts.
 
 ---
 
@@ -108,10 +94,13 @@ cargo run --release
 ---
 
 ## ⚠️ Known Limits
-- Spreadsheets have no undo yet, and a selection is a single cell.
-- `.xlsx` files keep the formatting listed above. Borders, merged cells, charts, and theme colors are not preserved.
-- Date cells open as their underlying numbers.
+- `.xlsx` files keep the formatting listed above. Borders, charts, and theme colors are not preserved.
+- Spreadsheets have no sorting, filtering, frozen panes, or find and replace yet.
+- `.docx` headers, footers, and comments are not kept. OfficeLite says so when it opens a file that has them. Footnotes move to the end of the document, and text boxes and equations become plain text.
+- The old `.doc` format cannot be opened. Save it as `.docx` in Word first.
+- The page on screen is always Letter size, but a `.docx` file keeps its own page size and margins when saved.
 - Save asks for a location each time.
+- OfficeLite edits one document and one spreadsheet at a time. Opening several files from Finder at once opens only the first.
 
 ## 📜 License
 [ISC](LICENSE). Bundled components keep their own licenses, listed in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

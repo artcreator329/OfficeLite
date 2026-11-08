@@ -1,0 +1,197 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OfficeLite .docx round trip test</title>
+<link rel="stylesheet" href="../styles.css">
+<script src="../vendor/jszip.min.js"></script>
+<script src="../docx.js"></script>
+<body style="overflow:auto">
+<div class="document-page" id="page"></div>
+<div class="document-page" id="again"></div>
+<pre id="results"></pre>
+<script>
+// Open this page through a local server. window.roundTrip holds the results.
+const IMAGE = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAoAAAAFCAYAAAB8ZH1oAAAAEklEQVR42mP8z8AARMQBJhQ1ADPkBQHSm0HnAAAAAElFTkSuQmCC';
+const SOURCE = `
+  <h1>Title one</h1><h2>Title two</h2><h3>Title three</h3>
+  <p>Plain <b>bold</b> <i>italic</i> <u>under</u> <s>struck</s> x<sup>2</sup> y<sub>3</sub></p>
+  <p><font color="#cc3300">red</font> <span style="background-color: rgb(255, 235, 59);">marked</span>
+     <font size="1">size10</font> <font size="2">size11</font> <font size="4">size14</font> <font size="5">size18</font> <font size="7">size32</font>
+     <font face="Georgia, serif">georgia</font> <span style="font-family: 'Times New Roman', serif">times</span></p>
+  <p style="text-align: center;">centered</p><p style="text-align: right;">righted</p><p style="text-align: justify;">justified</p>
+  <blockquote style="margin: 0 0 0 40px; border: none; padding: 0px;"><p>indented</p></blockquote>
+  <p><a href="https://example.com/a?b=1&amp;c=2">a link</a></p>
+  <ul><li>bullet one<ul><li>nested bullet</li></ul></li><li>bullet two</li></ul>
+  <ol><li>number one</li><li>number two<ol><li>nested number</li></ol></li></ol>
+  <ol start="5" style="list-style-type: lower-alpha"><li>fifth letter</li></ol>
+  <table><thead><tr><th>Head A</th><th>Head B</th></tr></thead>
+    <tbody><tr><td style="background-color:#fde68a">shaded</td><td><b>bold cell</b></td></tr>
+    <tr><td colspan="2">wide cell</td></tr></tbody></table>
+  <table><tr><td rowspan="2">tall</td><td>r1</td></tr><tr><td>r2</td></tr></table>
+  <blockquote>a quotation</blockquote>
+  <pre>code line one
+  second line	tabbed</pre>
+  <hr>
+  <p>Before picture <img src="${IMAGE}" alt="tiny picture" style="width:100px;height:50px"> after picture</p>
+  <hr data-page-break>
+  <p><br></p>
+  <p>Tricky &lt;text&gt; &amp; "quotes" \u0001 end</p>`;
+
+const results = [];
+function check(name, ok, detail) {
+  results.push({ name, ok: Boolean(ok), detail: ok ? undefined : detail });
+}
+
+async function xmlOf(blob) {
+  const zip = await JSZip.loadAsync(await blob.arrayBuffer());
+  return {
+    zip,
+    doc: await zip.file('word/document.xml').async('string'),
+    rels: await zip.file('word/_rels/document.xml.rels').async('string'),
+    numbering: zip.file('word/numbering.xml') ? await zip.file('word/numbering.xml').async('string') : ''
+  };
+}
+
+async function run() {
+  const page = document.getElementById('page');
+  page.innerHTML = SOURCE;
+  const first = await OfficeLiteDocx.htmlToDocx(page);
+  const a = await xmlOf(first.blob);
+  const has = (name, pattern) => check(`saved: ${name}`, pattern.test(a.doc), String(pattern));
+
+  check('saved: no warnings', first.warnings.length === 0, first.warnings);
+  has('heading style', /<w:pStyle w:val="Heading1"\/>.*Title one/);
+  has('bold', /<w:b\/><\/w:rPr><w:t[^>]*>bold/);
+  has('italic', /<w:i\/><\/w:rPr><w:t[^>]*>italic/);
+  has('underline', /<w:u w:val="single"\/><\/w:rPr><w:t[^>]*>under/);
+  has('strikethrough', /<w:strike\/><\/w:rPr><w:t[^>]*>struck/);
+  has('superscript', /<w:vertAlign w:val="superscript"\/><\/w:rPr><w:t[^>]*>2/);
+  has('text color', /<w:color w:val="CC3300"\/><\/w:rPr><w:t[^>]*>red/);
+  has('highlight', /w:fill="FFEB3B"\/><\/w:rPr><w:t[^>]*>marked/);
+  [[10, 'size10'], [11, 'size11'], [14, 'size14'], [18, 'size18'], [32, 'size32']].forEach(([pt, word]) => {
+    has(`font size ${pt}pt`, new RegExp(`<w:sz w:val="${pt * 2}"/>.*?<w:t[^>]*>${word}`));
+  });
+  has('font family', /w:ascii="Georgia"[^>]*\/><\/w:rPr><w:t[^>]*>georgia/);
+  has('font with a space', /w:ascii="Times New Roman"[^>]*\/><\/w:rPr><w:t[^>]*>times/);
+  has('centered', /<w:jc w:val="center"\/><\/w:pPr><w:r><w:t[^>]*>centered/);
+  has('right aligned', /<w:jc w:val="right"\/><\/w:pPr><w:r><w:t[^>]*>righted/);
+  has('justified', /<w:jc w:val="both"\/><\/w:pPr><w:r><w:t[^>]*>justified/);
+  has('indent', /<w:ind w:left="600"\/><\/w:pPr><w:r><w:t[^>]*>indented/);
+  has('hyperlink', /<w:hyperlink r:id="rId\d+"[^>]*>.*a link/);
+  check('saved: link target', a.rels.includes('https://example.com/a?b=1&amp;c=2'), a.rels);
+  has('nested list level', /<w:ilvl w:val="1"\/>.*?nested bullet/);
+  check('saved: bullets and numbers differ', /w:numFmt w:val="bullet"/.test(a.numbering) && /w:numFmt w:val="decimal"/.test(a.numbering), a.numbering.slice(0, 300));
+  check('saved: letter list and its start', /w:numFmt w:val="lowerLetter"/.test(a.numbering) && /w:startOverride w:val="5"/.test(a.numbering), a.numbering.slice(-300));
+  check('saved: no typed bullet characters', !/<w:t[^>]*>•/.test(a.doc));
+  has('table', /<w:tbl>/);
+  has('table header row', /<w:tblHeader\/>/);
+  has('cell shading', /w:fill="FDE68A"/);
+  has('merged columns', /<w:gridSpan w:val="2"\/>/);
+  has('fixed column layout', /<w:tblLayout w:type="fixed"\/>/);
+  has('merged rows', /<w:vMerge w:val="restart"\/>.*<w:vMerge\/>/);
+  has('quote style', /<w:pStyle w:val="Quote"\/>.*a quotation/);
+  has('code block', /<w:pStyle w:val="Preformatted"\/>.*code line one.*<w:br\/>.*<w:tab\/>/);
+  has('horizontal line', /<w:pBdr><w:bottom/);
+  has('picture', /<w:drawing>.*<a:blip r:embed="rId\d+"\/>/);
+  has('picture size', /<wp:extent cx="952500" cy="476250"\/>/);
+  has('picture description', /descr="tiny picture"/);
+  check('saved: picture file', Object.keys(a.zip.files).some((name) => /^word\/media\/image1\.png$/.test(name)), Object.keys(a.zip.files));
+  has('page break', /<w:br w:type="page"\/>/);
+  has('escaped text', /Tricky &lt;text&gt; &amp; &quot;quotes&quot;  ?end/);
+  check('saved: control characters removed', !/\u0001/.test(a.doc));
+  check('saved: well formed XML', !new DOMParser().parseFromString(a.doc, 'application/xml').querySelector('parsererror'));
+
+  // Read it back
+  const back = await OfficeLiteDocx.docxToHtml(await first.blob.arrayBuffer());
+  const again = document.getElementById('again');
+  again.innerHTML = back.html;
+  const find = (selector, text) => [...again.querySelectorAll(selector)].find((el) => el.textContent.trim() === text);
+  const css = (selector, text) => {
+    const el = find(selector, text);
+    return el ? getComputedStyle(el) : null;
+  };
+  const opened = (name, ok, detail) => check(`opened: ${name}`, ok, detail);
+
+  opened('no warnings', back.warnings.length === 0, back.warnings);
+  opened('headings', find('h1', 'Title one') && find('h2', 'Title two') && find('h3', 'Title three'));
+  opened('bold', find('b', 'bold'));
+  opened('italic', find('i', 'italic'));
+  opened('underline', find('u', 'under'));
+  opened('strikethrough', find('s', 'struck'));
+  opened('superscript', find('sup', '2'));
+  opened('subscript', find('sub', '3'));
+  opened('text color', css('span', 'red')?.color === 'rgb(204, 51, 0)', css('span', 'red')?.color);
+  opened('highlight', css('span', 'marked')?.backgroundColor === 'rgb(255, 235, 59)', css('span', 'marked')?.backgroundColor);
+  [[10, 'size10'], [11, 'size11'], [14, 'size14'], [18, 'size18'], [32, 'size32']].forEach(([pt, word]) => {
+    const size = parseFloat(css('span', word)?.fontSize) * 0.75;
+    opened(`${pt}pt`, Math.abs(size - pt) < 0.1, size);
+  });
+  opened('font family', /Georgia/.test(css('span', 'georgia')?.fontFamily));
+  opened('font with a space', /Times New Roman/.test(css('span', 'times')?.fontFamily));
+  opened('centered', css('p', 'centered')?.textAlign === 'center');
+  opened('right aligned', css('p', 'righted')?.textAlign === 'right');
+  opened('justified', css('p', 'justified')?.textAlign === 'justify');
+  opened('indent', parseFloat(css('p', 'indented')?.marginLeft) === 40, css('p', 'indented')?.marginLeft);
+  opened('link', again.querySelector('a[href]')?.getAttribute('href') === 'https://example.com/a?b=1&c=2', again.querySelector('a[href]')?.getAttribute('href'));
+  opened('nested bullets', again.querySelector('ul ul li')?.textContent === 'nested bullet');
+  opened('nested numbers', again.querySelector('ol ol li')?.textContent === 'nested number');
+  opened('letter list start', again.querySelector('ol[start="5"]')?.style.listStyleType === 'lower-alpha');
+  opened('table header', find('th', 'Head A'));
+  opened('cell shading', find('td', 'shaded')?.style.backgroundColor === 'rgb(253, 230, 138)');
+  opened('merged columns', find('td', 'wide cell')?.colSpan === 2);
+  opened('merged rows', find('td', 'tall')?.rowSpan === 2);
+  opened('quote', find('blockquote', 'a quotation'));
+  opened('code block', /code line one\n\s+second line\ttabbed/.test(again.querySelector('pre')?.textContent || ''), again.querySelector('pre')?.textContent);
+  opened('horizontal line', again.querySelector('hr:not([data-page-break])'));
+  opened('page break', again.querySelector('hr[data-page-break]'));
+  const picture = again.querySelector('img');
+  opened('picture', picture && picture.src.startsWith('data:image/png') && picture.alt === 'tiny picture');
+  opened('picture size', picture?.style.width === '100px' && picture?.style.height === '50px');
+  opened('own files reopen without extra styling', !again.querySelector('p[style*="margin"]:not([style*="margin-left"]), h1[style], h2[style], h3[style], blockquote[style], li[style], pre[style]'),
+    again.querySelector('p[style*="margin"]:not([style*="margin-left"]), h1[style], h2[style], h3[style], blockquote[style], li[style], pre[style]')?.outerHTML);
+
+  // Saving and opening again changes nothing
+  const second = await OfficeLiteDocx.htmlToDocx(again);
+  const b = await xmlOf(second.blob);
+  check('second save: same text', textOf(a.doc) === textOf(b.doc), firstDifference(textOf(a.doc), textOf(b.doc)));
+  const backAgain = await OfficeLiteDocx.docxToHtml(await second.blob.arrayBuffer());
+  check('third open: identical HTML', backAgain.html === back.html, firstDifference(back.html, backAgain.html));
+
+  // Page setup
+  const a4 = { pgSz: { w: 11906, h: 16838, orient: null }, pgMar: { top: 720, right: 720, bottom: 720, left: 720, header: 360, footer: 360, gutter: 0 } };
+  const paged = await OfficeLiteDocx.htmlToDocx(page, { section: a4 });
+  const pagedBack = await OfficeLiteDocx.docxToHtml(await paged.blob.arrayBuffer());
+  check('page size and margins survive', pagedBack.section.pgSz.w === 11906 && pagedBack.section.pgMar.left === 720, pagedBack.section);
+
+  // A table with no borders stays that way
+  const plain = document.createElement('div');
+  plain.innerHTML = '<table><tr><td style="border:none">x</td></tr></table>';
+  const plainXml = await xmlOf((await OfficeLiteDocx.htmlToDocx(plain)).blob);
+  check('borderless table', /<w:insideH w:val="nil"\/>/.test(plainXml.doc), plainXml.doc.slice(0, 400));
+
+  // Empty and unsafe documents
+  const blank = document.createElement('div');
+  const empty = await OfficeLiteDocx.docxToHtml(await (await OfficeLiteDocx.htmlToDocx(blank)).blob.arrayBuffer());
+  check('blank document stays blank', empty.html === '<p><br></p>', empty.html);
+  blank.innerHTML = '<p><a href="javascript:alert(1)">bad</a></p>';
+  const unsafe = await xmlOf((await OfficeLiteDocx.htmlToDocx(blank)).blob);
+  check('unsafe link is not written', !unsafe.rels.includes('javascript'), unsafe.rels);
+
+  const passed = results.filter((r) => r.ok).length;
+  window.roundTrip = { passed, failed: results.filter((r) => !r.ok), total: results.length, html: back.html, blob: first.blob };
+  document.getElementById('results').textContent = `${passed} of ${results.length} passed\n` + JSON.stringify(window.roundTrip.failed, null, 2);
+  page.style.display = 'none';
+}
+
+function textOf(xml) {
+  return [...xml.matchAll(/<w:t[^>]*>([^<]*)/g)].map((m) => m[1]).join('');
+}
+function firstDifference(a, b) {
+  let i = 0;
+  while (i < a.length && a[i] === b[i]) i++;
+  return [a.slice(Math.max(0, i - 80), i + 120), b.slice(Math.max(0, i - 80), i + 120)];
+}
+run().catch((err) => {
+  window.roundTrip = { crashed: String(err.stack || err) };
+  document.getElementById('results').textContent = window.roundTrip.crashed;
+});
+</script>

@@ -8,9 +8,8 @@ use std::fs;
 use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::sync::{Arc, Mutex};
 
-use serde::{Deserialize, Serialize};
 use tao::{
     dpi::LogicalSize,
     event::{Event, StartCause, WindowEvent},
@@ -23,6 +22,8 @@ use wry::{http::Response, WebViewBuilder};
 const INDEX_HTML: &str = include_str!("../index.html");
 const STYLES_CSS: &str = include_str!("../styles.css");
 const APP_JS: &str = include_str!("../app.js");
+const FORMULA_JS: &str = include_str!("../formula.js");
+const DOCX_JS: &str = include_str!("../docx.js");
 const VENDOR_JSZIP: &[u8] = include_bytes!("../vendor/jszip.min.js");
 const VENDOR_MAMMOTH: &[u8] = include_bytes!("../vendor/mammoth.browser.min.js");
 const VENDOR_XLSX: &[u8] = include_bytes!("../vendor/xlsx.full.min.js");
@@ -34,6 +35,46 @@ const SAMPLE_XLSX: &[u8] = include_bytes!("../samples/Sample_Budget.xlsx");
 /// Messages from the web view's IPC handler back to the event loop.
 enum UserEvent {
     Print { title: String },
+    /// The page has loaded and can take File menu commands and opened files.
+    PageReady,
+    FileCommand(&'static str),
+}
+
+/// Files that Finder asked the app to open. The page fetches one by its index, so it never
+/// sees or picks a path itself.
+type OpenedFiles = Arc<Mutex<Vec<PathBuf>>>;
+
+fn handle_opened_file(query: Option<&str>, opened: &OpenedFiles) -> Response<Cow<'static, [u8]>> {
+    let path = query
+        .and_then(|q| q.split('&').find_map(|pair| pair.strip_prefix("id=")))
+        .and_then(|id| id.parse::<usize>().ok())
+        .and_then(|id| opened.lock().ok()?.get(id).cloned());
+    let Some(path) = path else {
+        return json_response(404, serde_json::json!({ "error": "This file is no longer available" }));
+    };
+    match fs::read(&path) {
+        Ok(bytes) => Response::builder()
+            .header("Content-Type", "application/octet-stream")
+            .body(cow_vec(bytes))
+            .unwrap(),
+        Err(e) => json_response(
+            500,
+            serde_json::json!({ "error": format!("{} ({})", e, path.display()) }),
+        ),
+    }
+}
+
+/// Script that hands an opened file to the page.
+fn open_file_script(id: usize, path: &Path) -> String {
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    format!(
+        "window.officeLiteOpenFile && window.officeLiteOpenFile({}, {})",
+        id,
+        serde_json::Value::String(name)
+    )
 }
 
 fn cow_slice<'a>(s: &'a [u8]) -> Cow<'a, [u8]> {
@@ -42,208 +83,6 @@ fn cow_slice<'a>(s: &'a [u8]) -> Cow<'a, [u8]> {
 
 fn cow_vec(v: Vec<u8>) -> Cow<'static, [u8]> {
     Cow::Owned(v)
-}
-
-#[derive(Serialize)]
-struct StatusResponse {
-    status: &'static str,
-    pandoc_available: bool,
-    pandoc_path: Option<String>,
-    pandoc_version: Option<String>,
-    engine: &'static str,
-}
-
-#[derive(Deserialize)]
-struct ExportDocxRequest {
-    html: String,
-    filename: Option<String>,
-}
-
-#[derive(Serialize)]
-struct ImportDocxResponse {
-    html: String,
-}
-
-fn find_pandoc() -> Option<(PathBuf, String)> {
-    let candidate_paths = [
-        PathBuf::from("/opt/homebrew/bin/pandoc"),
-        PathBuf::from("/usr/local/bin/pandoc"),
-        PathBuf::from("/usr/bin/pandoc"),
-    ];
-
-    for path in &candidate_paths {
-        if path.exists() {
-            if let Ok(output) = Command::new(path).arg("--version").output() {
-                if output.status.success() {
-                    let text = String::from_utf8_lossy(&output.stdout);
-                    let first_line = text.lines().next().unwrap_or("pandoc").to_string();
-                    return Some((path.clone(), first_line));
-                }
-            }
-        }
-    }
-
-    // Try finding via `which pandoc`
-    if let Ok(output) = Command::new("which").arg("pandoc").output() {
-        if output.status.success() {
-            let path_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            let path = PathBuf::from(path_str);
-            if path.exists() {
-                if let Ok(ver_out) = Command::new(&path).arg("--version").output() {
-                    let text = String::from_utf8_lossy(&ver_out.stdout);
-                    let first_line = text.lines().next().unwrap_or("pandoc").to_string();
-                    return Some((path, first_line));
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn handle_export_docx(body: &[u8], pandoc_info: &Option<(PathBuf, String)>) -> Response<Cow<'static, [u8]>> {
-    let pandoc_bin = match pandoc_info {
-        Some((path, _)) => path,
-        None => {
-            return Response::builder()
-                .status(501)
-                .header("Content-Type", "application/json")
-                .body(cow_slice(b"{\"error\":\"Pandoc not installed\"}"))
-                .unwrap();
-        }
-    };
-
-    let req_data: ExportDocxRequest = match serde_json::from_slice(body) {
-        Ok(d) => d,
-        Err(e) => {
-            let err_json = format!("{{\"error\":\"Invalid JSON: {}\"}}", e);
-            return Response::builder()
-                .status(400)
-                .header("Content-Type", "application/json")
-                .body(cow_vec(err_json.into_bytes()))
-                .unwrap();
-        }
-    };
-
-    let filename = req_data.filename.unwrap_or_else(|| "document.docx".to_string());
-    let mut temp_html = tempfile::Builder::new().suffix(".html").tempfile().unwrap();
-    if let Err(e) = temp_html.write_all(req_data.html.as_bytes()) {
-        let err_json = format!("{{\"error\":\"Temp file error: {}\"}}", e);
-        return Response::builder()
-            .status(500)
-            .header("Content-Type", "application/json")
-            .body(cow_vec(err_json.into_bytes()))
-            .unwrap();
-    }
-    let html_path = temp_html.path().to_path_buf();
-    let docx_path = html_path.with_extension("docx");
-
-    let cmd_status = Command::new(pandoc_bin)
-        .arg("-f")
-        .arg("html")
-        .arg("-t")
-        .arg("docx")
-        .arg("-o")
-        .arg(&docx_path)
-        .arg(&html_path)
-        .status();
-
-    match cmd_status {
-        Ok(status) if status.success() => {
-            if let Ok(docx_bytes) = fs::read(&docx_path) {
-                let _ = fs::remove_file(&docx_path);
-                Response::builder()
-                    .status(200)
-                    .header("Content-Type", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
-                    .header("Content-Disposition", format!("attachment; filename=\"{}\"", filename))
-                    .body(cow_vec(docx_bytes))
-                    .unwrap()
-            } else {
-                Response::builder()
-                    .status(500)
-                    .header("Content-Type", "application/json")
-                    .body(cow_slice(b"{\"error\":\"Failed to read generated docx\"}"))
-                    .unwrap()
-            }
-        }
-        Ok(status) => {
-            let err_json = format!("{{\"error\":\"Pandoc failed with exit code: {}\"}}", status);
-            Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json")
-                .body(cow_vec(err_json.into_bytes()))
-                .unwrap()
-        }
-        Err(e) => {
-            let err_json = format!("{{\"error\":\"Pandoc execution error: {}\"}}", e);
-            Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json")
-                .body(cow_vec(err_json.into_bytes()))
-                .unwrap()
-        }
-    }
-}
-
-fn handle_import_docx(body: &[u8], pandoc_info: &Option<(PathBuf, String)>) -> Response<Cow<'static, [u8]>> {
-    let pandoc_bin = match pandoc_info {
-        Some((path, _)) => path,
-        None => {
-            return Response::builder()
-                .status(501)
-                .header("Content-Type", "application/json")
-                .body(cow_slice(b"{\"error\":\"Pandoc not installed\"}"))
-                .unwrap();
-        }
-    };
-
-    let mut temp_docx = tempfile::Builder::new().suffix(".docx").tempfile().unwrap();
-    if let Err(e) = temp_docx.write_all(body) {
-        let err_json = format!("{{\"error\":\"Temp file error: {}\"}}", e);
-        return Response::builder()
-            .status(500)
-            .header("Content-Type", "application/json")
-            .body(cow_vec(err_json.into_bytes()))
-            .unwrap();
-    }
-    let docx_path = temp_docx.path().to_path_buf();
-
-    let output = Command::new(pandoc_bin)
-        .arg("-f")
-        .arg("docx")
-        .arg("-t")
-        .arg("html")
-        .arg(&docx_path)
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let html_str = String::from_utf8_lossy(&out.stdout).to_string();
-            let json_resp = serde_json::to_string(&ImportDocxResponse { html: html_str }).unwrap();
-            Response::builder()
-                .status(200)
-                .header("Content-Type", "application/json")
-                .body(cow_vec(json_resp.into_bytes()))
-                .unwrap()
-        }
-        Ok(out) => {
-            let err_text = String::from_utf8_lossy(&out.stderr);
-            let err_json = format!("{{\"error\":\"Pandoc failed: {}\"}}", err_text);
-            Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json")
-                .body(cow_vec(err_json.into_bytes()))
-                .unwrap()
-        }
-        Err(e) => {
-            let err_json = format!("{{\"error\":\"Pandoc execution error: {}\"}}", e);
-            Response::builder()
-                .status(500)
-                .header("Content-Type", "application/json")
-                .body(cow_vec(err_json.into_bytes()))
-                .unwrap()
-        }
-    }
 }
 
 fn json_response(status: u16, value: serde_json::Value) -> Response<Cow<'static, [u8]>> {
@@ -334,11 +173,12 @@ fn handle_save_file(query: Option<&str>, body: &[u8]) -> Response<Cow<'static, [
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let pandoc_info = find_pandoc();
-    let pandoc_clone_for_protocol = pandoc_info.clone();
 
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let ipc_proxy = event_loop.create_proxy();
+    let menu_proxy = event_loop.create_proxy();
+    let opened_files: OpenedFiles = Arc::new(Mutex::new(Vec::new()));
+    let protocol_opened_files = opened_files.clone();
     let window = WindowBuilder::new()
         .with_title("OfficeLite")
         .with_inner_size(LogicalSize::new(1280.0, 860.0))
@@ -353,42 +193,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if message["cmd"] == "print" {
                 let title = message["title"].as_str().unwrap_or("OfficeLite").to_string();
                 let _ = ipc_proxy.send_event(UserEvent::Print { title });
+            } else if message["cmd"] == "ready" {
+                let _ = ipc_proxy.send_event(UserEvent::PageReady);
             }
         })
         .with_custom_protocol("officelite".into(), move |_webview_id, req| {
             let path = req.uri().path();
             let method = req.method().as_str();
 
-            // API: Status
-            if path == "/api/status" {
-                let resp = StatusResponse {
-                    status: "online",
-                    pandoc_available: pandoc_clone_for_protocol.is_some(),
-                    pandoc_path: pandoc_clone_for_protocol.as_ref().map(|(p, _)| p.to_string_lossy().to_string()),
-                    pandoc_version: pandoc_clone_for_protocol.as_ref().map(|(_, v)| v.clone()),
-                    engine: "Native Rust (WebKit / Wry - Zero Localhost)",
-                };
-                let json = serde_json::to_string(&resp).unwrap();
-                return Response::builder()
-                    .header("Content-Type", "application/json")
-                    .header("Access-Control-Allow-Origin", "*")
-                    .body(cow_vec(json.into_bytes()))
-                    .unwrap();
-            }
-
-            // API: Export DOCX
-            if path == "/api/export-docx" && method == "POST" {
-                return handle_export_docx(req.body(), &pandoc_clone_for_protocol);
-            }
-
-            // API: Import DOCX
-            if path == "/api/import-docx" && method == "POST" {
-                return handle_import_docx(req.body(), &pandoc_clone_for_protocol);
-            }
-
             // API: Save a file through the native Save panel
             if path == "/api/save-file" && method == "POST" {
                 return handle_save_file(req.uri().query(), req.body());
+            }
+
+            // API: Read a file that Finder asked the app to open
+            if path == "/api/opened-file" && method == "GET" {
+                return handle_opened_file(req.uri().query(), &protocol_opened_files);
             }
 
             // Embedded Static Assets
@@ -404,6 +224,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "/app.js" => Response::builder()
                     .header("Content-Type", "application/javascript; charset=utf-8")
                     .body(cow_slice(APP_JS.as_bytes()))
+                    .unwrap(),
+                "/formula.js" => Response::builder()
+                    .header("Content-Type", "application/javascript; charset=utf-8")
+                    .body(cow_slice(FORMULA_JS.as_bytes()))
+                    .unwrap(),
+                "/docx.js" => Response::builder()
+                    .header("Content-Type", "application/javascript; charset=utf-8")
+                    .body(cow_slice(DOCX_JS.as_bytes()))
                     .unwrap(),
                 "/vendor/jszip.min.js" => Response::builder()
                     .header("Content-Type", "application/javascript; charset=utf-8")
@@ -443,12 +271,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_url("officelite://localhost/index.html")
         .build(&window)?;
 
+    // Files opened before the page finished loading wait here.
+    let mut page_ready = false;
+    let mut waiting_file: Option<usize> = None;
+
     event_loop.run(move |event, _, control_flow| {
         *control_flow = ControlFlow::Wait;
 
         match event {
             Event::NewEvents(StartCause::Init) => {
-                macos::install_main_menu();
+                let proxy = menu_proxy.clone();
+                macos::install_main_menu(move |command| {
+                    let _ = proxy.send_event(UserEvent::FileCommand(command));
+                });
+            }
+            Event::Opened { urls } => {
+                // OfficeLite edits one file at a time, so it opens the first one.
+                let Some(path) = urls.iter().find_map(|url| url.to_file_path().ok()) else {
+                    return;
+                };
+                let id = {
+                    let mut files = opened_files.lock().unwrap();
+                    files.push(path.clone());
+                    files.len() - 1
+                };
+                if page_ready {
+                    let _ = webview.evaluate_script(&open_file_script(id, &path));
+                } else {
+                    waiting_file = Some(id);
+                }
+                window.set_focus();
+            }
+            Event::UserEvent(UserEvent::PageReady) => {
+                page_ready = true;
+                if let Some(id) = waiting_file.take() {
+                    let path = opened_files.lock().unwrap()[id].clone();
+                    let _ = webview.evaluate_script(&open_file_script(id, &path));
+                }
+            }
+            Event::UserEvent(UserEvent::FileCommand(command)) => {
+                let script = format!(
+                    "window.officeLiteCommand && window.officeLiteCommand({})",
+                    serde_json::Value::String(command.to_string())
+                );
+                let _ = webview.evaluate_script(&script);
             }
             Event::UserEvent(UserEvent::Print { title }) => {
                 macos::print_webview(&webview, &title);

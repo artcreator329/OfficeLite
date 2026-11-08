@@ -2,12 +2,13 @@
 //! the main menu (which is what makes Cut, Copy, Paste, and Undo reach the web view),
 //! the Save panel, and printing.
 
+use std::cell::RefCell;
 use std::path::PathBuf;
 use std::ptr::null_mut;
 
 use objc2::rc::Retained;
-use objc2::runtime::Sel;
-use objc2::sel;
+use objc2::runtime::{AnyObject, NSObject, Sel};
+use objc2::{declare_class, msg_send_id, mutability, sel, ClassType, DeclaredClass};
 use objc2_app_kit::{
     NSApplication, NSEventModifierFlags, NSMenu, NSMenuItem, NSModalResponseOK, NSPrintInfo,
     NSSavePanel,
@@ -71,12 +72,70 @@ pub fn print_webview(webview: &WebView, title: &str) {
     }
 }
 
-/// Installs the menu bar. Commands use a nil target, so they travel the responder chain
-/// to whatever has focus, including the web view.
-pub fn install_main_menu() {
+thread_local! {
+    static FILE_COMMAND: RefCell<Option<Box<dyn Fn(&'static str)>>> = RefCell::new(None);
+}
+
+fn run_file_command(command: &'static str) {
+    FILE_COMMAND.with(|handler| {
+        if let Some(handler) = handler.borrow().as_ref() {
+            handler(command);
+        }
+    });
+}
+
+declare_class!(
+    /// Receives the File menu commands, which the page carries out.
+    struct FileMenuTarget;
+
+    // SAFETY: NSObject has no subclassing requirements, and this class has no Drop.
+    unsafe impl ClassType for FileMenuTarget {
+        type Super = NSObject;
+        type Mutability = mutability::MainThreadOnly;
+        const NAME: &'static str = "OfficeLiteFileMenuTarget";
+    }
+
+    impl DeclaredClass for FileMenuTarget {}
+
+    unsafe impl FileMenuTarget {
+        #[method(officeLiteNew:)]
+        fn new_file(&self, _sender: Option<&AnyObject>) {
+            run_file_command("new");
+        }
+
+        #[method(officeLiteOpen:)]
+        fn open_file(&self, _sender: Option<&AnyObject>) {
+            run_file_command("open");
+        }
+
+        #[method(officeLiteSave:)]
+        fn save_file(&self, _sender: Option<&AnyObject>) {
+            run_file_command("save");
+        }
+
+        #[method(officeLitePrint:)]
+        fn print_file(&self, _sender: Option<&AnyObject>) {
+            run_file_command("print");
+        }
+    }
+);
+
+/// Installs the menu bar. Edit and Window commands use a nil target, so they travel the
+/// responder chain to whatever has focus, including the web view. File commands go to
+/// `on_file_command`.
+pub fn install_main_menu(on_file_command: impl Fn(&'static str) + 'static) {
     let Some(mtm) = MainThreadMarker::new() else {
         return;
     };
+    FILE_COMMAND.with(|handler| *handler.borrow_mut() = Some(Box::new(on_file_command)));
+
+    // Menu items do not retain their target, so this lives for the rest of the app's life.
+    let file_target: &'static FileMenuTarget = unsafe {
+        let this = mtm.alloc::<FileMenuTarget>().set_ivars(());
+        let target: Retained<FileMenuTarget> = msg_send_id![super(this), init];
+        &*Retained::into_raw(target)
+    };
+    let file_target_object: &AnyObject = file_target;
 
     const COMMAND: NSEventModifierFlags = NSEventModifierFlags::NSEventModifierFlagCommand;
     const SHIFT: NSEventModifierFlags = NSEventModifierFlags::NSEventModifierFlagShift;
@@ -95,6 +154,20 @@ pub fn install_main_menu() {
             Entry::Separator,
             Entry::Item("Quit OfficeLite", sel!(terminate:), "q", COMMAND),
         ],
+    );
+
+    let file_menu = submenu_with_target(
+        mtm,
+        "File",
+        &[
+            Entry::Item("New", sel!(officeLiteNew:), "n", COMMAND),
+            Entry::Item("Open…", sel!(officeLiteOpen:), "o", COMMAND),
+            Entry::Separator,
+            Entry::Item("Save…", sel!(officeLiteSave:), "s", COMMAND),
+            Entry::Separator,
+            Entry::Item("Print…", sel!(officeLitePrint:), "p", COMMAND),
+        ],
+        Some(file_target_object),
     );
 
     let edit_menu = submenu(
@@ -132,7 +205,7 @@ pub fn install_main_menu() {
 
     unsafe {
         let menu_bar = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str(""));
-        for menu in [&app_menu, &edit_menu, &window_menu] {
+        for menu in [&app_menu, &file_menu, &edit_menu, &window_menu] {
             let holder = NSMenuItem::new(mtm);
             holder.setSubmenu(Some(menu));
             menu_bar.addItem(&holder);
@@ -154,6 +227,15 @@ const fn combine(a: NSEventModifierFlags, b: NSEventModifierFlags) -> NSEventMod
 }
 
 fn submenu(mtm: MainThreadMarker, title: &str, entries: &[Entry]) -> Retained<NSMenu> {
+    submenu_with_target(mtm, title, entries, None)
+}
+
+fn submenu_with_target(
+    mtm: MainThreadMarker,
+    title: &str,
+    entries: &[Entry],
+    target: Option<&AnyObject>,
+) -> Retained<NSMenu> {
     unsafe {
         let menu = NSMenu::initWithTitle(mtm.alloc(), &NSString::from_str(title));
         for entry in entries {
@@ -167,6 +249,7 @@ fn submenu(mtm: MainThreadMarker, title: &str, entries: &[Entry]) -> Retained<NS
                         &NSString::from_str(key),
                     );
                     item.setKeyEquivalentModifierMask(*modifiers);
+                    item.setTarget(target);
                     menu.addItem(&item);
                 }
             }
