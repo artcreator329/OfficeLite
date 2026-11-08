@@ -1,8 +1,8 @@
 # OfficeLite 🦀📄📊
-### Native Rust Desktop Word (.docx) & Excel (.xlsx) Viewer & Editor
-**Zero Localhost &bull; Zero Network Ports &bull; 100% Native macOS &bull; 3.2 MB Binary**
+### Free Word (.docx) & Excel (.xlsx) Editor for Mac, Windows, and Linux
+**Native Mac App &bull; Browser Version for Windows and Linux &bull; Private and Offline &bull; 3.2 MB Mac App**
 
-**OfficeLite** is a blazingly fast, standalone desktop app built in **Rust** (powered by Tao + Wry / macOS WebKit) so you never need to pay for a Microsoft 365 / MS Office subscription.
+**OfficeLite** is a fast, free editor for Word documents and Excel spreadsheets, so you never need to pay for a Microsoft 365 / MS Office subscription. On a Mac it runs as a small native app built in **Rust** (powered by Tao + Wry / macOS WebKit). On Windows and Linux it runs in your browser.
 
 ![OfficeLite editing a Word document](docs/screenshot-document.jpg)
 
@@ -10,7 +10,7 @@
 
 ---
 
-## ⚡ Why Rust Instead of Electron or Localhost?
+## ⚡ Why a Native Rust App on the Mac?
 
 | Metric | 🐌 Electron App | 🌐 Python Localhost | 🦀 **OfficeLite (Rust)** |
 | :--- | :--- | :--- | :--- |
@@ -23,26 +23,76 @@
 
 ---
 
-## 🚀 Build From Source
+## 🚀 Run It
 
-There is no ready-made download yet, so build the app yourself. You need a Mac running macOS 11 or newer, with the [Rust toolchain](https://rustup.rs) installed.
+| Your computer | How to run OfficeLite |
+| :--- | :--- |
+| **Windows** | In your browser (Option 1) |
+| **Linux** | In your browser (Option 1) |
+| **Mac** | As a native app (Option 2), or in your browser (Option 1) |
+
+There is no ready-made download yet. First, get a copy of this repository:
 
 ```bash
 git clone https://github.com/artcreator329/OfficeLite.git
 cd OfficeLite
 ```
 
-Build a double clickable app at `target/release/OfficeLite.app`, which you can drag into `/Applications`. Once it is there, Finder lists OfficeLite under **Open With** for `.docx`, `.xlsx`, `.xls`, `.csv`, `.txt`, and `.html` files:
+No Git? On this GitHub page, click **Code > Download ZIP**, then unzip it.
+
+### Option 1: In your browser (Windows, Linux, or Mac)
+
+You need [Python 3](https://www.python.org/downloads/) and nothing else. On Windows, tick **Add python.exe to PATH** in the Python installer.
+
+| Your computer | Start it by |
+| :--- | :--- |
+| **Windows** | Double clicking `start.bat`, or running `py server.py` in Command Prompt |
+| **Mac** | Double clicking `start.command`, or running `python3 server.py` in Terminal |
+| **Linux** | Running `python3 server.py` in a terminal |
+
+OfficeLite opens in your default browser at `http://127.0.0.1:8765/`. If that port is busy, it picks the next free one and prints the address. Keep the window open while you work, and press **Ctrl+C** in it to stop.
+
+Tested in Chrome and Safari. Edge uses the same engine as Chrome. Firefox has not been tested.
+
+How the browser version differs from the Mac app:
+- **Save** downloads the file to your Downloads folder instead of asking where to put it.
+- **Print** uses your browser's print dialog, which can also save a PDF.
+- To open a file, use the **Open** button or drag the file into the window. There is no File menu and no Open With.
+- Your work autosaves in that browser only.
+
+The server only listens on your own computer (`127.0.0.1`), so no other device can reach it, and your files never leave your computer.
+
+### Option 2: The Mac app
+
+You need macOS 11 or newer and the [Rust toolchain](https://rustup.rs). The first build downloads the Rust dependencies and takes a few minutes.
+
+Build a double clickable app at `target/release/OfficeLite.app`:
 
 ```bash
 ./scripts/make-app.sh
 ```
 
-Or run it directly:
+Drag it into `/Applications`. Finder then lists OfficeLite under **Open With** for `.docx`, `.xlsx`, `.xls`, `.csv`, `.txt`, and `.html` files.
+
+The first time you open it, macOS may block it because it is not signed with an Apple Developer ID. Go to **System Settings > Privacy & Security** and click **Open Anyway**.
+
+To run it without making the app bundle:
 
 ```bash
 cargo run --release
 ```
+
+The Mac app does not build on Windows or Linux. Use Option 1 there.
+
+### Run the tests
+
+The unit tests cover the formula engine and the Word file reader and writer. They need [Node.js](https://nodejs.org) 18 or newer, and nothing to install:
+
+```bash
+npm test
+```
+
+To test Word files in a real browser, start Option 1, then open `http://127.0.0.1:8765/tests/docx-roundtrip.html`. It saves a sample document as `.docx`, opens it again, and shows how many checks passed.
 
 ---
 
@@ -87,8 +137,9 @@ cargo run --release
 ---
 
 ## 🔒 100% Private & Offline
-- **Zero Localhost**: Communicates using an in-memory custom protocol (`officelite://`). It does not open any network sockets or listen on any ports.
-- **Self-Contained**: All HTML, CSS, JavaScript, and libraries (SheetJS, Mammoth, JSZip) are compiled directly into the Mach-O binary.
+- **No Network Ports on the Mac**: The Mac app talks to its page through an in-memory custom protocol (`officelite://`). It does not open any network sockets or listen on any ports.
+- **Local Only in the Browser**: The browser version's server listens only on `127.0.0.1`, so nothing outside your computer can reach it.
+- **Self-Contained**: All HTML, CSS, JavaScript, and libraries (SheetJS, Mammoth, JSZip) ship with OfficeLite, and the Mac app compiles them into its binary. Nothing is loaded from the internet.
 - **Auto-Save Protection**: Real-time autosave to local application storage.
 
 ---
